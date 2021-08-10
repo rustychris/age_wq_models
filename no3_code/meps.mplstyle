@@ -1,0 +1,17 @@
+axes.titlesize : 13
+axes.labelsize : 13
+xtick.labelsize : 13
+ytick.labelsize : 13
+legend.fontsize: 13
+font.family: sans-serif
+font.sans-serif: Arial, Helvetica, Liberation Sans, DejaVu Sans, Bitstream Vera Sans, sans-serif
+font.size: 13
+
+xtick.major.width: 0.8
+ytick.major.width: 0.8
+xtick.minor.width: 0.4
+ytick.minor.width: 0.4
+
+lines.linewidth : 2
+lines.markersize: 5.6
+grid.linewidth: 0.8
