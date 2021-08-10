@@ -8,6 +8,14 @@
 #   - temperature experienced by tracer
 # - estimate optimal rate
 #   
+from __future__ import print_function
+# DEV
+import six
+import DSS_IO_vue
+import obsdata_utils
+#six.moves.reload_module(DSS_IO_vue)
+#six.moves.reload_module(obsdata_utils)
+# /DEV
 
 import os.path, sys
 import matplotlib.pyplot as plt
@@ -42,8 +50,8 @@ plt.style.use('meps.mplstyle')
 
 N_g = 14.0067 # weight of a mole of N
 
-extract_from_nc = 1
-#extract_from_nc = 0
+#extract_from_nc = 1
+extract_from_nc = 0
 if extract_from_nc: # get untrim age etc. for each x,y,t and save in dataframe
     var_list = {'conc':['Mesh2_scalar2_3d', 'kgm-3', 1.],
                 'age-conc':['Mesh2_scalar3_3d', 'd*kgm-3', 86400.],
@@ -80,9 +88,9 @@ if extract_from_nc: # get untrim age etc. for each x,y,t and save in dataframe
     uw_df['NO3-N'] = NO3_um*N_g/1000.
     NH4_um = uw_df['NH4 (uM) (Tline) HR'].values
     uw_df['NH4-N'] = NH4_um*N_g/1000.
-    print "reading grid"
+    print("reading grid")
     grd = unstructured_grid.UnTRIM08Grid(grd_fn)
-    print "read grid"
+    print("read grid")
     cells_i = np.zeros(nrows, np.int32)
     indices = []
     for nr in range(nrows):
@@ -133,7 +141,7 @@ if extract_from_nc: # get untrim age etc. for each x,y,t and save in dataframe
             if (last_n == n) and (last_i ==i):
                 var_arrays[var][nr] = data
                 #uw_df[var].iloc[nr] = data
-                print var,nr,i,n,data 
+                print(var,nr,i,n,data )
                 continue
             else:
                 indices.append(nr)
@@ -178,7 +186,7 @@ if extract_from_nc: # get untrim age etc. for each x,y,t and save in dataframe
                 #uw_df[var].iloc[nr] = data
             last_i = i
             last_n = n
-            print var,nr,i,n,data
+            print(var,nr,i,n,data)
         #pdb.set_trace()
         uw_df[var] = var_arrays[var]
         iarray = np.asarray(indices)
@@ -232,7 +240,7 @@ age = age_data['age']
 conc = age_data['conc']
 #dn_age_vs, age_vs = get_var_dss_light(age_dss_fname, age_dss_rec['vs'],
 #                                      tstart=date_start_dt, tend=date_end_dt)
-
+#pdb.set_trace() # RH: what is age here? dict of stations, arrays
 # read flow data from UnTRIM input
 # low-pass filter flow
 flow_dss_fname = 'UnTRIM_flow_BCs_2011-2019.dss'
@@ -318,25 +326,25 @@ NH4_atten = np.zeros_like(NO3_pred)
 NO3_mm = np.zeros_like(NO3_pred)
 NH4_mm = np.zeros_like(NO3_pred)
 dnums = uw_df_thin['dnums'].values
-age = uw_df_thin['age'].values
+uw_age = uw_df_thin['age'].values # RH: This overwrites age from above. Renaming to uw_age
 for nr in range(nrows):
-    dn_lagged = dnums[nr] - age[nr]
+    dn_lagged = dnums[nr] - uw_age[nr]
     n_NO3 = np.where(dn_NO3['fp']>=dn_lagged)[0][0]
     n_NH4 = np.where(NH4_dn>=dn_lagged)[0][0]
     NH4_lag[nr] = NH4_fp[n_NH4]
-    NH4_atten[nr] = 1.-math.exp(-k_ni*age[nr])
+    NH4_atten[nr] = 1.-math.exp(-k_ni*uw_age[nr])
     NO3_lag[nr] = NO3['fp_lp'][n_NO3]
     NO3_pred[nr] = NO3_lag[nr] + NH4_lag[nr]*NH4_atten[nr]
-    NH4_pred[nr] = NH4_fp[n_NH4]*math.exp(-k_ni*age[nr])
+    NH4_pred[nr] = NH4_fp[n_NH4]*math.exp(-k_ni*uw_age[nr])
     # Michaelis Menten
     # Analytical MM:
-    F=NH4_lag[nr]/Csat*np.exp(NH4_lag[nr]/Csat-kmm/Csat*age[nr])
+    F=NH4_lag[nr]/Csat*np.exp(NH4_lag[nr]/Csat-kmm/Csat*uw_age[nr])
     NH4_mm[nr] = Csat*lambertw(F)
     NO3_mm[nr] = NO3_lag[nr] + NH4_lag[nr] - NH4_mm[nr]
     # add in loss term
-    NO3_mm[nr] -= daily_NO3_loss*age[nr]
+    NO3_mm[nr] -= daily_NO3_loss*uw_age[nr]
 
-pdb.set_trace()
+#pdb.set_trace()
 
 # plot maps
 fig, ax = plt.subplots(1, 1, figsize=[12,12])
@@ -378,7 +386,7 @@ for sta in pred_stations:
     NH4_mm[sta] = np.zeros_like(dn_age[sta])
     for nloop, dn in enumerate(dn_age[sta][noffset:]):
         n = nloop + noffset
-        dn_lagged = dn_age[sta][n] - age[sta][n]
+        dn_lagged = dn_age[sta][n] - age[sta][n] # RH: age is just an array though
         n_NO3 = np.where(dn_NO3['fp']>=dn_lagged)[0][0]
         #pdb.set_trace()
         n_NH4 = np.where(NH4_dn>=dn_lagged)[0][0]
@@ -408,7 +416,7 @@ for method in methods:
         NO3_plot = NO3_mm
         NH4_plot = NH4_mm
     else:
-        print "invalid method"
+        print( "invalid method")
         sys.exit(0)
     # make time series plot
     fig, ax = plt.subplots(npred+3, 1, sharex="all",figsize=[16,16])
@@ -448,7 +456,7 @@ for method in methods:
     # make residual plot
     res_vars = age_vars # do everything for now
     nres_vars = len(res_vars)
-#    ymax_dict = {'Age':30,
+    # ymax_dict = {'Age':30,
     fig, axes = plt.subplots(nres_vars, npred+1,
                              sharey='row',figsize=[16,16])
     NO3_res = {}
@@ -535,7 +543,7 @@ for method in methods:
         axes[nv,npred].plot(xx,yy,'-')
 
     fig.tight_layout()
-    pdb.set_trace()
+    # pdb.set_trace()
     plt.savefig('%s_residual.png'%method,bbox_inches='tight')
     plt.close()
     sequence=['sta','rmse','se','r','wm']
