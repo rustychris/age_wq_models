@@ -9,28 +9,22 @@
 # - estimate optimal rate
 #   
 from __future__ import print_function
-# DEV
-import six
-import DSS_IO_vue
-import obsdata_utils
-#six.moves.reload_module(DSS_IO_vue)
-#six.moves.reload_module(obsdata_utils)
-# /DEV
 
 import os.path, sys
 import matplotlib.pyplot as plt
 import numpy as np
 import datetime as dt
 from netCDF4 import Dataset, num2date
+from shapely import geometry
+
 from pylab import date2num as d2n
 from pylab import num2date as n2d
-from stompy.utils import fill_invalid
-from stompy.filters import lowpass_godin
+from stompy.utils import fill_invalid, to_dt64, to_datetime, to_dnum, interp_near
+from stompy.filters import lowpass_godin, lowpass
 from stompy.grid import unstructured_grid 
 from scipy.interpolate import interp1d
 from sklearn.metrics import mean_squared_error
 import math
-from matplotlib.cm import jet
 import copy
 import pandas as pd
 import pyproj
@@ -44,6 +38,10 @@ from scipy.stats import linregress
 from scipy import stats
 from DSS_IO import (DSS_IO, bad_data_val, get_dss_interval_for_times,
                     split_DSS_record_name, create_DSS_record_name)
+import stompy.plot.cmap as scmap
+from stompy.plot import plot_wkb
+jet=scmap.load_gradient('turbo.cpt') # jet-ish, but with smooth gradients
+
 import pdb
 
 plt.style.use('meps.mplstyle')
@@ -52,6 +50,8 @@ N_g = 14.0067 # weight of a mole of N
 
 #extract_from_nc = 1
 extract_from_nc = 0
+grd_fn=r"LTO_Restoration_2018_h.grd"
+
 if extract_from_nc: # get untrim age etc. for each x,y,t and save in dataframe
     var_list = {'conc':['Mesh2_scalar2_3d', 'kgm-3', 1.],
                 'age-conc':['Mesh2_scalar3_3d', 'd*kgm-3', 86400.],
@@ -62,7 +62,6 @@ if extract_from_nc: # get untrim age etc. for each x,y,t and save in dataframe
                 'age': ['compute', 'days','age-conc', 'conc']}
     #ncfile=r"\\compute16\E\temp\UnTRIM\temperature_2018_16_Febstart_SacReg_age_v8\untrim_hydro_Oct2018_time_chunk_new.nc"
     ncfile=r"\\compute16\E\temp\UnTRIM\temperature_2018_16_Febstart_SacReg_age_v8\untrim_hydro_Oct2018.nc"
-    grd_fn=r"LTO_Restoration_2018_h.grd"
 # read continuous underway data
     underway_dir = r'R:\UCD\Projects\CDFW_Holleman\Observations\Underway_measurements\2018'
     underway_csv = 'Delta Water Quality Mapping October 2018 High Resolution_edited.csv'
@@ -196,11 +195,30 @@ if extract_from_nc: # get untrim age etc. for each x,y,t and save in dataframe
     uw_df.to_csv('uw_df.csv',index=False)
 else:
     uw_df = pd.read_csv('uw_df.csv')
+    # Grab the grid, too
+    # What's slow in reading this grid? 25s. No single hot spot, just
+    # lots of slow file reading/parsing.
+    grd = unstructured_grid.UnTRIM08Grid(grd_fn)
 
-# thin out the datafrom for unique i,n combinations
-indices = np.where(uw_df['selected']==1)[0]
-uw_df_thin = uw_df.iloc[indices]
+grd_poly=grd.boundary_polygon()
+
+if 0: # thin out the datafrom for unique i,n combinations, taking first
+    indices = np.where(uw_df['selected']==1)[0]
+    uw_df_thin = uw_df.iloc[indices]
+else:
+    # Alternative: thin dataframe by grouping/mean
+    # creates slightly fewer rows, due to the ship passing
+    # back and forth over a boundary in a short time span.
+    # For our purposes I think it's reasonable to combine them.
+    grped=uw_df.groupby(['i','n'])
+    uw_df_grped=grped.mean() # this drops the object fields dtimes and Timestamp (PST)
+    uw_df_grped['dtimes']=grped['dtimes'].first()
+    uw_df_grped['Timestamp (PST)']=grped['Timestamp (PST)'].first()
+    uw_df_grped=uw_df_grped.reset_index()
+    
 nrows = len(uw_df_thin)
+
+## 
 
 # read in information needed for NO3 predictions
 # read age first because will use selected time for interpolation etc.
@@ -211,6 +229,7 @@ var_label_dict = {'age':'Age [days]',
                   'depth':'Depth [m]',
                   'temperature':'Temperature [$^\circ$C]'}
 age_stations=['dc','cr','cl','di','vs']
+# File also has DWSC, but I think Ed was omitting for a reason
 label_dict = {'dc':'Sac ab DCC',
               'cr':'Cache ab Ryer',
               'cl':'Cache Lib',
@@ -219,6 +238,7 @@ label_dict = {'dc':'Sac ab DCC',
 rec_template = '/UT/$STA$/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
 #rec_template = '/UT/%(STA)s/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
 #rec_template%dss_sta_dict
+
 age_data = {}
 for var in age_vars:
     dss_rec = {}
@@ -304,6 +324,7 @@ NO3_dss_rec = {'fp':'/SAC R FREEPORT/11447650/INORGANIC_NITRO//15MIN/USGS/',
                'di':'/SAC R A DECKER ISL RV/11455478/INORGANIC_NITRO//15MIN/USGS/',
                'vs':'/SUISUN BAY VAN SICKLE/11455508/INORGANIC_NITRO//15MIN/USGS/'}
 NO3_stations = ['fp','dc','cr','cl','di','vs']
+# These come in with uniform timestamps and some nan values
 dn_NO3, NO3 = get_var_dss(stations=NO3_stations, dss_records=NO3_dss_rec,
                                                  dss_fname=usgs_dss_fname)
 # put the NO3 on same time steps as age
@@ -316,6 +337,82 @@ for sta in NO3_stations:
 NO3['fp_fill'] = fill_invalid(NO3['fp'])
 NO3['fp_lp'] = lowpass_godin(NO3['fp_fill'], dn_NO3['fp'], ends='nan')
 
+##
+# RH: check on gap in NO3 at freeport
+# Put USGS station data into a dataframe
+usgs_df_long=pd.concat([ pd.DataFrame(dict(time=to_dt64( dn_NO3[sta.replace('_fill','').replace('_lp','')]),
+                                           no3=NO3[sta],sta=sta))
+                         for sta in NO3.keys()])
+# Combine to wide format
+usgs_df_wide=usgs_df_long.set_index(['time','sta']).unstack('sta').droplevel(0,1)
+
+# basic linear regression:
+from statsmodels.formula.api import ols
+#model = ols(formula="fp~dc", data=usgs_df_wide).fit()
+#usgs_df_wide['fp_lin']=model.predict(usgs_df_wide)
+
+#linear regression against lagged value
+usgs_dn=to_dnum(usgs_df_wide.index.values)
+# adjust lag to maximize R-squared: 0.7 days => R2=0.933
+usgs_df_wide['dc_lag']=np.interp( usgs_dn+0.7,
+                                  usgs_dn,usgs_df_wide.dc)
+model_lag = ols(formula="fp~dc_lag", data=usgs_df_wide).fit()
+usgs_df_wide['fp_lag']=model_lag.predict(usgs_df_wide)
+##
+if 0:
+    # Fill FP gaps with this model. First, interpolate onto age
+    # times, but not over large gaps (max_dx=1 day)
+    # fill NO3 data at Freeport
+    valid=np.isfinite(NO3['fp'])
+    max_gap_days=1.0
+    print("fp:       %d of %d in NO3[fp] are valid"%(valid.sum(),len(valid)))
+    fp_fill=interp_near( dn_NO3['fp'], dn_NO3['fp'][valid], NO3['fp'][valid], max_dx=max_gap_days)
+    fp_valid=np.isfinite(fp_fill)
+    print("fp:       %d of %d valid after fill small gaps"%(fp_valid.sum(),len(fp_valid)))
+    
+    # Use the linear model and lagged DCC data to fill in fp where the lagged
+    # DCC data is valid.
+    fp_lag_valid=np.isfinite(usgs_df_wide['fp_lag'].values)
+    fp_lag_fill=interp_near( dn_NO3['fp'], usgs_dn[fp_lag_valid], usgs_df_wide['fp_lag'].values[fp_lag_valid],
+                             max_dx=max_gap_days)
+    lag_valid=np.isfinite(fp_lag_fill)
+    print("fp_lag:   %d of %d valid after fill small gaps"%(lag_valid.sum(),len(lag_valid)))
+
+    combined=np.where(fp_valid,fp_fill,fp_lag_fill)
+    print("combined: %d of %d valid"%(np.isfinite(combined).sum(),len(combined)))
+    
+    NO3['fp_fill'] = fill_invalid(combined)
+    print("fp_fill:  %d of %d valid"%(np.isfinite(NO3['fp_fill']).sum(),len(NO3['fp_fill'])))
+    # Seems like the signals, especially with the splices and questionable data,
+    # have some noise that Godin is missing. Go with long-ish Butterworth.
+    # NO3['fp_lp'] = lowpass_godin(NO3['fp_fill'], dn_NO3['fp'], ends='nan')
+    NO3['fp_lp'] = lowpass(NO3['fp_fill'], dn_NO3['fp'], cutoff=2.5)
+
+    # Don't update NO3_age -- it's used for plotting observed NO3 and calculating residuals,
+    # so don't pollute it with this 
+    
+## 
+if 1:
+    fig=plt.figure(22)
+    fig.clf()
+    ax=fig.add_subplot()
+    for sta in ['fp','dc']:
+        ax.plot(dn_NO3[sta],NO3[sta],label=sta)
+    ax.plot(dn_NO3['fp'],NO3['fp_fill'],label='fp fill')
+    ax.plot(dn_NO3['fp'],NO3['fp_lp'],label='fp lp')
+    ax.plot(usgs_df_wide.index.values, usgs_df_wide['fp_lag'],label='fp lag')
+    plt.setp(ax.lines,lw=1.0)
+    ax.legend()
+    ax.xaxis_date()
+    fig.autofmt_xdate()
+    ax.axis(xmin=np.datetime64('2018-10-01'),
+            xmax=np.datetime64('2018-11-05'))
+
+    ax.legend()
+    ax.axis((736920.6060114561, 737038.9861075104, -0.006265952088709725, 0.5495188518367599))
+    fig.savefig('freeport-lag-filled.png')
+    
+##
 # now that necessary data is loaded in, plot maps
 daily_NO3_loss = 0.0015
 NO3_pred = np.zeros(nrows, np.float64)
@@ -344,19 +441,125 @@ for nr in range(nrows):
     # add in loss term
     NO3_mm[nr] -= daily_NO3_loss*uw_age[nr]
 
-#pdb.set_trace()
 
+## RH
+if 1:
+    # Did the change in FP do anything for the underway predictions?
+    # Have to run the code above once with the
+    # dcc fill in enabled, save the result,
+    # NO3_mm_with_dcc=NO3_mm.copy()
+    # and run again without.
+    plt.figure(23).clf()
+    fig,axs=plt.subplots(1,2,num=23)
+    axs[0].plot( NO3_mm, NO3_mm_with_dcc, 'g.')
+    axs[0].plot([0.14,0.45],[0.14,0.45],'k-',lw=0.9)
+
+    axs[0].set_xlabel('NO3_mm, Filled FP data')
+    axs[0].set_ylabel('NO3_mm, Lagged DCC data')
+    
+    scat = axs[1].scatter(uw_df_thin['x'].values,uw_df_thin['y'].values, c=NO3_mm_with_dcc-NO3_mm,
+                          cmap='coolwarm', s=60, vmin=-0.01, vmax=0.01)
+
+    plot_wkb.plot_wkb(grd_poly,fc='0.8',ec='0.8',zorder=-2,ax=axs[1])
+    [axs[1].axis(z) for z in ['tight','equal','off',(570257.0603246342, 656121.6409803774, 4196446.208894607, 4257788.628702029)]]
+    cax=fig.add_axes([0.55,0.9,0.20,0.02])
+    plt.colorbar(scat,cax=cax,label='NO3 lagged DC - fill FP\n mg-N/l',orientation='horizontal')
+    fig.tight_layout()
+    fig.savefig('compare_fill_vs_lag.png',dpi=150)
+
+
+#pdb.set_trace()
+## 
 # plot maps
-fig, ax = plt.subplots(1, 1, figsize=[12,12])
+plt.figure(1).clf()
+fig,ax=plt.subplots(1,1,num=1)
+fig.set_size_inches([12,12],forward=True)
 x = uw_df_thin['x'].values
 y = uw_df_thin['y'].values
 NO3_obs = uw_df_thin['NO3-N'].values
 NH4_obs = uw_df_thin['x'].values
 cmax = 0.4
-sc = ax.scatter(x, y, c=NO3_obs, cmap=jet, s=60, vmin=0, vmax=cmax)
-sc = ax.scatter(x, y, c=NO3_mm, cmap=jet, s=5, vmin=0, vmax=cmax)
+sc_obs = ax.scatter(x, y, c=NO3_obs, cmap=jet, s=60, vmin=0, vmax=cmax)
+sc_mm = ax.scatter(x, y, c=NO3_mm, cmap=jet, s=5, vmin=0, vmax=cmax)
+plt.ion()
+plt.colorbar(sc_obs,label="NO$_3$ (mg/l)")
+ax.text(0.98,0.95,"Outer=observed\nInner=MM model",transform=ax.transAxes,ha='right')
+ax.axis('off')
+ax.axis('equal')
+plot_wkb.plot_wkb(grd_poly,ax=ax,fc='0.8',ec='0.8',zorder=-2)
+fig.tight_layout()
+plt.show()
+fig.savefig('obs_vs_model_map.png',dpi=150)
+
+##
+
+from stompy.plot import plot_utils
+if 0:
+    sac_corridor=plot_utils.draw_polyline()
+else:
+    # Follows Georgiana, tho.
+    sac_corridor=np.array([[ 628277, 4270210],
+                           [ 630351, 4270136],
+                           [ 631092, 4267690],
+                           [ 631907, 4255316],
+                           [ 628795, 4238126],
+                           [ 631611, 4235088],
+                           [ 629240, 4230790],
+                           [ 628128, 4228493],
+                           [ 624720, 4222417],
+                           [ 626128, 4220120],
+                           [ 627091, 4216563],
+                           [ 623460, 4216415],
+                           [ 614495, 4215526],
+                           [ 598786, 4211376],
+                           [ 595451, 4209820],
+                           [ 576557, 4209524],
+                           [ 575001, 4212858],
+                           [ 583522, 4215378],
+                           [ 589598, 4213451],
+                           [ 592265, 4213525],
+                           [ 596933, 4212710],
+                           [ 601231, 4215155],
+                           [ 604936, 4214488],
+                           [ 613383, 4221972],
+                           [ 615754, 4221083],
+                           [ 626202, 4234939],
+                           [ 621534, 4242645],
+                           [ 625016, 4269691]])
+sac_poly=geometry.Polygon(sac_corridor)
+
+# Scatter of the same thing
+plt.figure(2).clf()
+fig,axs=plt.subplots(1,2,num=2)
+fig.set_size_inches([12,7],forward=True)
+x = uw_df_thin['x'].values
+y = uw_df_thin['y'].values
+
+in_corridor=np.array([sac_poly.contains( geometry.Point(pnt) )
+                      for pnt in np.c_[x,y] ])
+
+NO3_obs = uw_df_thin['NO3-N'].values
+NH4_obs = uw_df_thin['x'].values
+
+for ax in axs:
+    # Coloring by dnum wasn't that helpful.
+    scat1=ax.scatter(NO3_obs[~in_corridor], NO3_mm[~in_corridor], s=5, color='0.85',label="Off axis")
+    scat2=ax.scatter(NO3_obs[in_corridor], NO3_mm[in_corridor], s=20, color='tab:blue',label="Sac corridor")
+    ax.set_xlabel('Observed NO$_3$')
+    ax.set_ylabel('Predicted NO$_3$')
+
+axs[1].plot([0,0.6],[0,0.6],color='tab:red',lw=0.5)
+
+axs[1].axis(xmax=0.45,xmin=0,ymin=0.13,ymax=0.48)
+axs[0].axis(xmax=2.00,xmin=0,ymin=0.13,ymax=0.48)
+axs[1].legend(loc='lower right')
 plt.ion()
 plt.show()
+
+fig.savefig('obs_vs_model_scatter.png',dpi=150)
+
+
+## 
 
 # evolution equation based on enrichment of NO3 by nitrification
 

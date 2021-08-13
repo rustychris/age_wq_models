@@ -10,9 +10,11 @@ from stompy.utils import hour_tide
 from scipy.interpolate import interp1d
 import pdb
 import pandas as pd
-# from DSS_IO import (DSS_IO, bad_data_val, get_dss_interval_for_times,
-#                     split_DSS_record_name, create_DSS_record_name)
-from DSS_IO_vue import DSS_IO
+if sys.platform=='linux':
+    from DSS_IO_vue import DSS_IO
+else:
+    from DSS_IO import (DSS_IO, bad_data_val, get_dss_interval_for_times,
+                        split_DSS_record_name, create_DSS_record_name)
 
 import pytz
 import shelve
