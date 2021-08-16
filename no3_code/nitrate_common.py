@@ -213,3 +213,18 @@ def read_tracer_output():
                 age_data['dn'][sta] = sta_dn
             age_data[var][sta] = age_data[var][sta][valid]
     return age_data
+
+if 0:
+    from stompy.plot import plot_utils
+    sac_corridor=plot_utils.draw_polyline()
+else:
+    # Follows Georgiana, tho.
+    sac_corridor=np.array([[ 628277, 4270210],[ 630351, 4270136],[ 631092, 4267690],[ 631907, 4255316],
+                           [ 628795, 4238126],[ 631611, 4235088],[ 629240, 4230790],[ 628128, 4228493],
+                           [ 624720, 4222417],[ 626128, 4220120],[ 627091, 4216563],[ 623460, 4216415],
+                           [ 614495, 4215526],[ 598786, 4211376],[ 595451, 4209820],[ 576557, 4209524],
+                           [ 575001, 4212858],[ 583522, 4215378],[ 589598, 4213451],[ 592265, 4213525],
+                           [ 596933, 4212710],[ 601231, 4215155],[ 604936, 4214488],[ 613383, 4221972],
+                           [ 615754, 4221083],[ 626202, 4234939],[ 621534, 4242645],[ 625016, 4269691]])
+from shapely import geometry
+sac_poly=geometry.Polygon(sac_corridor)

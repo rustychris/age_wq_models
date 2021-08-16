@@ -193,57 +193,50 @@ if 1: # 1 to enable filling FP gaps with lag/regressed DCC
     
 ##
 
-# Model parameters:
-Csat=1.0
-k_ni = 0.08
-#k_ni = 0.09
-#k_ni = 0.05
-#kmm = 2*Csat*k_ni
-kmm = 1.5*Csat*k_ni
-daily_NO3_loss = 0.0015
+# Make sure it's kosher to use searchsorted below
+assert np.all(np.diff(dn_NO3['fp'])>=0) # just to be sure
+assert np.all(np.diff(NH4_dn)>=0) # just to be sure
 
-def nitri_model1(k_ni,daily_loss):
-    def predict()HERE
+    
+# How slow is the forward model with no preprocessing?
+def nitri_model(dnums_in,age_in,
+                k_ni,kmm,daily_NO3_loss,Csat,method='MM'):
+    # These could be preprocessed
+    dn_lagged = dnums_in - age_in
+    n_NO3=np.searchsorted(dn_NO3['fp'],dn_lagged)
+    n_NH4 = np.searchsorted(NH4_dn,dn_lagged)
+    NH4_lag = NH4_fp[n_NH4] # lagged boundary NH4
+    NO3_lag = NO3['fp_lp'][n_NO3] # lagged boundary NO3
 
-## 
-
-
+    # Steps dependent on model parameters
+    if method=='first': # First order model:
+        NH4_atten=1.-np.exp(-k_ni*age_in) # fraction of NH4 nitrified
+        nit_flux=NH4_lag*NH4_atten
+    elif method=='MM': # Michaelis Menten closed form 
+        F=NH4_lag/Csat*np.exp(NH4_lag/Csat-kmm/Csat*uw_age)
+        # For F>=0, lambertw on principal branch is real. safe to cast.
+        # Write this as flux to make mass conservation clear (minor overhead)
+        nit_flux=NH4_lag-Csat*np.real(lambertw(F))
+    else:
+        raise Exception("bad method %s"%method)
+        
+    # add in loss term
+    NO3_pred = NO3_lag + nit_flux - daily_NO3_loss*age_in
+    NH4_pred = NH4_lag - nit_flux
+    return NH4_pred,NO3_pred
 
 # now that necessary data is loaded in, plot maps
 
-NH4_pred = np.zeros_like(NO3_pred)
-NO3_mm = np.zeros_like(NO3_pred)
-NH4_mm = np.zeros_like(NO3_pred)
-dnums = uw_df_thin['dnums'].values
-uw_age = uw_df_thin['age'].values # RH: This overwrites age from above. Renaming to uw_age
-
-# Vectorize, preprocessing not dependent on parameter values
-dn_lagged = dnums - uw_age
-assert np.all(np.diff(dn_NO3['fp'])>=0) # just to be sure
-n_NO3=np.searchsorted(dn_NO3['fp'],dn_lagged)
-assert np.all(np.diff(NH4_dn)>=0) # just to be sure
-n_NH4 = np.searchsorted(NH4_dn,dn_lagged)
-NH4_lag = NH4_fp[n_NH4] # lagged boundary NH4
-NO3_lag = NO3['fp_lp'][n_NO3] # lagged boundary NO3
 
 ##
-NH4_atten=1.-np.exp(-k_ni*uw_age)
-NO3_pred = NO3_lag + NH4_lag*NH4_atten
-NH4_pred = NH4_fp[n_NH4]*np.exp(-k_ni*uw_age)
 
-# Michaelis Menten
-# Analytical MM:
-F=NH4_lag/Csat*np.exp(NH4_lag/Csat-kmm/Csat*uw_age)
+# Run model
+dnums = uw_df_thin['dnums'].values
+uw_age = uw_df_thin['age'].values # RH: used to be just 'age'
 
-# For F>=0, lambertw on principal branch is real. safe to cast.
-NH4_mm = Csat*np.real(lambertw(F))
-NO3_mm = NO3_lag + NH4_lag - NH4_mm
+# 3.2ms
+NH4_mm,NO3_mm = nitri_model(dnums,uw_age,k_ni=0.08,kmm=0.12,Csat=1.0,daily_NO3_loss=0.0015)
 
-# add in loss term
-NO3_mm -= daily_NO3_loss*uw_age
-
-
-## 
 # plot maps
 plt.figure(1).clf()
 fig,ax=plt.subplots(1,1,num=1)
@@ -267,20 +260,6 @@ fig.savefig(os.path.join(fig_dir,'obs_vs_model_map.png'),dpi=150)
 
 ##
 
-from stompy.plot import plot_utils
-if 0:
-    sac_corridor=plot_utils.draw_polyline()
-else:
-    # Follows Georgiana, tho.
-    sac_corridor=np.array([[ 628277, 4270210],[ 630351, 4270136],[ 631092, 4267690],[ 631907, 4255316],
-                           [ 628795, 4238126],[ 631611, 4235088],[ 629240, 4230790],[ 628128, 4228493],
-                           [ 624720, 4222417],[ 626128, 4220120],[ 627091, 4216563],[ 623460, 4216415],
-                           [ 614495, 4215526],[ 598786, 4211376],[ 595451, 4209820],[ 576557, 4209524],
-                           [ 575001, 4212858],[ 583522, 4215378],[ 589598, 4213451],[ 592265, 4213525],
-                           [ 596933, 4212710],[ 601231, 4215155],[ 604936, 4214488],[ 613383, 4221972],
-                           [ 615754, 4221083],[ 626202, 4234939],[ 621534, 4242645],[ 625016, 4269691]])
-sac_poly=geometry.Polygon(sac_corridor)
-
 # Scatter of the same thing
 plt.figure(2).clf()
 fig,axs=plt.subplots(1,2,num=2)
@@ -288,7 +267,7 @@ fig.set_size_inches([12,7],forward=True)
 x = uw_df_thin['x'].values
 y = uw_df_thin['y'].values
 
-in_corridor=np.array([sac_poly.contains( geometry.Point(pnt) )
+in_corridor=np.array([common.sac_poly.contains( geometry.Point(pnt) )
                       for pnt in np.c_[x,y] ])
 
 NO3_obs = uw_df_thin['NO3-N'].values
@@ -359,6 +338,8 @@ for sta in pred_stations:
         # add in loss term
         NO3_mm[sta][n] -= daily_NO3_loss*age_data['age'][sta][n]
 
+
+##         
 plot_stations = pred_stations # could change later
 methods = ['mm','first']
 nplot = len(plot_stations)
