@@ -64,61 +64,16 @@ if not os.path.exists(fig_dir):
     os.mkdir(fig_dir)
     
 ##  Read tracer outputs, including age, depth, temperature
-# read in information needed for NO3 predictions
-# read age first because will use selected time for interpolation etc.
-age_dss_fname = 'AgeScalars.dss'
-age_vars = ['age','conc','depth','temperature']
-var_label_dict = {'age':'Age [days]',
-                  'conc':'Concentration',
-                  'depth':'Depth [m]',
-                  'temperature':'Temperature [$^\circ$C]'}
-age_stations=['dc','cr','cl','di','vs']
-# File also has DWSC, but I think Ed was omitting for a reason
-label_dict = {'dc':'Sac ab DCC',
-              'cr':'Cache ab Ryer',
-              'cl':'Cache Lib',
-              'di':'Sac Decker',
-              'vs':'Van Sickle'}
-rec_template = '/UT/$STA$/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
-#rec_template = '/UT/%(STA)s/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
-#rec_template%dss_sta_dict
 
-age_data = {}
-age_data['dn']={}
-for var in age_vars:
-    dss_rec = {}
-    dss_sta_dict = {} # overwrite each time
-    for sta in age_stations:
-        dss_sta = label_dict[sta].upper().replace(" ","_")
-        dss_sta_dict[sta] = dss_sta
-        dss_rec[sta] = rec_template.replace("$STA$",dss_sta).replace("$VAR$",var)
-    dn_age, age_data[var] = get_var_dss(stations=age_stations, 
-                                        dss_records=dss_rec,
-                                        dss_fname=age_dss_fname)
-    # Trim to valid data only, per station.
-    for sta in age_stations:
-        valid = np.where(np.isfinite(age_data[var][sta]))
-        sta_dn= dn_age[sta][valid]
-        # Note that we fetch multiple variables, each time getting dn,
-        # but store it only once. Verify that dn is the same across variables.
-        if sta in age_data['dn']:
-            assert np.all( age_data['dn'][sta]==sta_dn)
-        else:
-            age_data['dn'][sta] = sta_dn
-        age_data[var][sta] = age_data[var][sta][valid]
+age_data=common.read_tracer_output()
 
-# save in short names also 
-# age = age_data['age']
-# conc = age_data['conc']
-
+# age_data[variable][station] = time series array
+# variable: 
 # RH: dn_age[sta] => age_data['dn'][sta]
 # and bare 'age' and 'conc' deleted
 
 ## 
 
-#dn_age_vs, age_vs = get_var_dss_light(age_dss_fname, age_dss_rec['vs'],
-#                                      tstart=date_start_dt, tend=date_end_dt)
-#pdb.set_trace() # RH: what is age here? dict of stations, arrays
 # read flow data from UnTRIM input
 # low-pass filter flow
 flow_dss_fname = 'UnTRIM_flow_BCs_2011-2019.dss'
@@ -133,16 +88,7 @@ flow['sr_lp'] = lowpass_godin(flow['sr'], dn_flow['sr'], ends='nan')
 # NH4 - typical Sac Regional NH4 in July/Aug from Kraus spreadsheet for 2020
 NH4_sr = 30 # mg/L as N
 NH4_am_uM = 1.0 # uM
-NH4_am = (NH4_am_uM/1000.)*N_g 
-Csat=1.0
-k_ni = 0.08
-#k_ni = 0.09
-#k_ni = 0.05
-#kmm = 2*Csat*k_ni
-kmm = 1.5*Csat*k_ni
-
-#def dCdtMM(t,C):
-#    return -kmm*C/(Csat+C)
+NH4_am = (NH4_am_uM/1000.)*N_g
 
 # put the flow on same time steps as age
 flow_age = {}
@@ -167,6 +113,8 @@ for n, dn in enumerate(NH4_dn):
     flow_am = flow['fp'][nflow_fp] - flow['sr_lp'][nflow_sr] # ambient flow
     NH4_fp[n] = (NH4_sr*flow['sr_lp'][nflow_sr] + NH4_am*flow_am)/flow['fp'][nflow_fp]
 
+    
+### 
 # read USGS continuous monitoring NO3 data
 usgs_dss_fname = 'chla_data.dss'
 NO3_dss_rec = {'fp':'/SAC R FREEPORT/11447650/INORGANIC_NITRO//15MIN/USGS/',
@@ -244,34 +192,56 @@ if 1: # 1 to enable filling FP gaps with lag/regressed DCC
     # so don't pollute it with this 
     
 ##
-# now that necessary data is loaded in, plot maps
+
+# Model parameters:
+Csat=1.0
+k_ni = 0.08
+#k_ni = 0.09
+#k_ni = 0.05
+#kmm = 2*Csat*k_ni
+kmm = 1.5*Csat*k_ni
 daily_NO3_loss = 0.0015
-NO3_pred = np.zeros(nrows, np.float64)
+
+def nitri_model1(k_ni,daily_loss):
+    def predict()HERE
+
+## 
+
+
+
+# now that necessary data is loaded in, plot maps
+
 NH4_pred = np.zeros_like(NO3_pred)
-NH4_lag = np.zeros_like(NO3_pred) # lagged boundary NH4
-NO3_lag = np.zeros_like(NO3_pred) # lagged boundary NO3
-NH4_atten = np.zeros_like(NO3_pred)
 NO3_mm = np.zeros_like(NO3_pred)
 NH4_mm = np.zeros_like(NO3_pred)
 dnums = uw_df_thin['dnums'].values
 uw_age = uw_df_thin['age'].values # RH: This overwrites age from above. Renaming to uw_age
-for nr in range(nrows):
-    dn_lagged = dnums[nr] - uw_age[nr]
-    n_NO3 = np.where(dn_NO3['fp']>=dn_lagged)[0][0]
-    n_NH4 = np.where(NH4_dn>=dn_lagged)[0][0]
-    NH4_lag[nr] = NH4_fp[n_NH4]
-    NH4_atten[nr] = 1.-math.exp(-k_ni*uw_age[nr])
-    NO3_lag[nr] = NO3['fp_lp'][n_NO3]
-    NO3_pred[nr] = NO3_lag[nr] + NH4_lag[nr]*NH4_atten[nr]
-    NH4_pred[nr] = NH4_fp[n_NH4]*math.exp(-k_ni*uw_age[nr])
-    # Michaelis Menten
-    # Analytical MM:
-    F=NH4_lag[nr]/Csat*np.exp(NH4_lag[nr]/Csat-kmm/Csat*uw_age[nr])
-    # For F>=0, lambertw on principal branch is real. safe to cast.
-    NH4_mm[nr] = Csat*np.real(lambertw(F))
-    NO3_mm[nr] = NO3_lag[nr] + NH4_lag[nr] - NH4_mm[nr]
-    # add in loss term
-    NO3_mm[nr] -= daily_NO3_loss*uw_age[nr]
+
+# Vectorize, preprocessing not dependent on parameter values
+dn_lagged = dnums - uw_age
+assert np.all(np.diff(dn_NO3['fp'])>=0) # just to be sure
+n_NO3=np.searchsorted(dn_NO3['fp'],dn_lagged)
+assert np.all(np.diff(NH4_dn)>=0) # just to be sure
+n_NH4 = np.searchsorted(NH4_dn,dn_lagged)
+NH4_lag = NH4_fp[n_NH4] # lagged boundary NH4
+NO3_lag = NO3['fp_lp'][n_NO3] # lagged boundary NO3
+
+##
+NH4_atten=1.-np.exp(-k_ni*uw_age)
+NO3_pred = NO3_lag + NH4_lag*NH4_atten
+NH4_pred = NH4_fp[n_NH4]*np.exp(-k_ni*uw_age)
+
+# Michaelis Menten
+# Analytical MM:
+F=NH4_lag/Csat*np.exp(NH4_lag/Csat-kmm/Csat*uw_age)
+
+# For F>=0, lambertw on principal branch is real. safe to cast.
+NH4_mm = Csat*np.real(lambertw(F))
+NO3_mm = NO3_lag + NH4_lag - NH4_mm
+
+# add in loss term
+NO3_mm -= daily_NO3_loss*uw_age
+
 
 ## 
 # plot maps
@@ -414,23 +384,23 @@ for method in methods:
         ax[ns].set_xlim(age_data['dn'][sta][0],age_data['dn'][sta][-1])
         ax[ns].set_ylim(0,0.6)
         ax[ns].set_ylabel('NO3 N')
-        ax[ns].set_title(label_dict[sta])
+        ax[ns].set_title(common.label_dict[sta])
 
     ax[npred].plot(NH4_dn,NH4_fp,label='Freeport')
     for sta in plot_stations:
-        ax[npred].plot(age_data['dn'][sta],NH4_plot[sta],label=label_dict[sta])
+        ax[npred].plot(age_data['dn'][sta],NH4_plot[sta],label=common.label_dict[sta])
     ax[npred].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
     ax[npred].legend()
     ax[npred].set_ylabel('NH4 N')
 
     for sta in plot_stations:
-        ax[npred+1].plot(age_data['dn'][sta],age_data['age'][sta],label=label_dict[sta])
+        ax[npred+1].plot(age_data['dn'][sta],age_data['age'][sta],label=common.label_dict[sta])
     ax[npred+1].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
     ax[npred+1].legend()
     ax[npred+1].set_ylabel('Age')
 
     for sta in plot_stations:
-        ax[npred+2].plot(age_data['dn'][sta],age_data['conc'][sta],label=label_dict[sta])
+        ax[npred+2].plot(age_data['dn'][sta],age_data['conc'][sta],label=common.label_dict[sta])
     ax[npred+2].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
     ax[npred+2].legend()
     ax[npred+2].set_ylabel('Conc')
@@ -440,7 +410,7 @@ for method in methods:
     plt.close()
 
     # make residual plot
-    res_vars = age_vars # do everything for now
+    res_vars = common.age_vars # do everything for now
     nres_vars = len(res_vars)
     # ymax_dict = {'Age':30,
     fig, axes = plt.subplots(nres_vars, npred+1,
@@ -496,12 +466,12 @@ for method in methods:
             #axes[nv,ns].plot(NO3_res[sta],age_data[var][sta],'.')
             axes[nv,ns].plot(age_data[var][sta],NO3_res[sta],'.')
             if nv == 0:
-                axes[nv,ns].set_title(label_dict[sta])
+                axes[nv,ns].set_title(common.label_dict[sta])
             if nv == nres_vars-1:
                 axes[nv,ns].set_xlabel('NO3 as N Residual')
             if ns == 0:
                 axes[nv,ns].set_ylabel('NO3 as N Residual')
-            axes[nv,ns].set_xlabel(var_label_dict[var])
+            axes[nv,ns].set_xlabel(common.var_label_dict[var])
             axes[nv,ns].set_xlim(xlim_dict[var])
             valid = np.where(np.isfinite(NO3_res[sta]))[0]
             res_val = NO3_res[sta][valid]
@@ -519,7 +489,7 @@ for method in methods:
         axes[nv,npred].plot(all_data,all_res,'.')
         if nv == 0:
             axes[nv,npred].set_title('all stations')
-        axes[nv,npred].set_xlabel(var_label_dict[var])
+        axes[nv,npred].set_xlabel(common.var_label_dict[var])
         axes[nv,npred].set_xlim(xlim_dict[var])
         mm, bb, rr, pp, se = stats.linregress(all_data, all_res)
         x_min = min(all_data)

@@ -167,3 +167,49 @@ def load_underway(extract_from_nc=0,thin='mean'):
         uw_df_thin=uw_df # no thinningn
         
     return uw_df_thin,grd
+
+## Reading tracer output from DSS 
+age_vars = ['age','conc','depth','temperature']
+var_label_dict = {'age':'Age [days]',
+                  'conc':'Concentration',
+                  'depth':'Depth [m]',
+                  'temperature':'Temperature [$^\circ$C]'}
+age_stations=['dc','cr','cl','di','vs']
+# File also has DWSC, but I think Ed was omitting for a reason
+label_dict = {'dc':'Sac ab DCC',
+              'cr':'Cache ab Ryer',
+              'cl':'Cache Lib',
+              'di':'Sac Decker',
+              'vs':'Van Sickle'}
+def read_tracer_output():
+    # read in information needed for NO3 predictions
+    # read age first because will use selected time for interpolation etc.
+    age_dss_fname = 'AgeScalars.dss'
+    rec_template = '/UT/$STA$/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
+    #rec_template = '/UT/%(STA)s/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
+    #rec_template%dss_sta_dict
+
+    age_data = {}
+    age_data['dn']={}
+    for var in age_vars:
+        dss_rec = {}
+        dss_sta_dict = {} # overwrite each time
+        for sta in age_stations:
+            dss_sta = label_dict[sta].upper().replace(" ","_")
+            dss_sta_dict[sta] = dss_sta
+            dss_rec[sta] = rec_template.replace("$STA$",dss_sta).replace("$VAR$",var)
+        dn_age, age_data[var] = get_var_dss(stations=age_stations, 
+                                            dss_records=dss_rec,
+                                            dss_fname=age_dss_fname)
+        # Trim to valid data only, per station.
+        for sta in age_stations:
+            valid = np.where(np.isfinite(age_data[var][sta]))
+            sta_dn= dn_age[sta][valid]
+            # Note that we fetch multiple variables, each time getting dn,
+            # but store it only once. Verify that dn is the same across variables.
+            if sta in age_data['dn']:
+                assert np.all( age_data['dn'][sta]==sta_dn)
+            else:
+                age_data['dn'][sta] = sta_dn
+            age_data[var][sta] = age_data[var][sta][valid]
+    return age_data
