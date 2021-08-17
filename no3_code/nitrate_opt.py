@@ -10,6 +10,7 @@
 #   
 from __future__ import print_function
 import six
+from scipy.optimize import fmin 
 
 import os.path, sys
 import matplotlib.pyplot as plt
@@ -200,7 +201,7 @@ assert np.all(np.diff(NH4_dn)>=0) # just to be sure
     
 # How slow is the forward model with no preprocessing?
 def nitri_model(dnums_in,age_in,
-                k_ni,kmm,daily_NO3_loss,Csat,method='MM'):
+                k_ni,kmm,daily_NO3_loss,Csat,method='mm'):
     # These could be preprocessed
     dn_lagged = dnums_in - age_in
     n_NO3=np.searchsorted(dn_NO3['fp'],dn_lagged)
@@ -211,22 +212,27 @@ def nitri_model(dnums_in,age_in,
     # Steps dependent on model parameters
     if method=='first': # First order model:
         NH4_atten=1.-np.exp(-k_ni*age_in) # fraction of NH4 nitrified
-        nit_flux=NH4_lag*NH4_atten
-    elif method=='MM': # Michaelis Menten closed form 
-        F=NH4_lag/Csat*np.exp(NH4_lag/Csat-kmm/Csat*uw_age)
+        d_nit=NH4_lag*NH4_atten # mg-N/l moved from NH4 to NO3
+    elif method=='mm': # Michaelis Menten closed form
+        # unit check:
+        # (mg/l / mg/l) * exp( mg/l / mg/l & mg/l/day / mg/l * days )
+        #       1         exp(     1       &  1 )
+        # 1
+        F=NH4_lag/Csat*np.exp(NH4_lag/Csat-kmm/Csat*age_in)
         # For F>=0, lambertw on principal branch is real. safe to cast.
         # Write this as flux to make mass conservation clear (minor overhead)
-        nit_flux=NH4_lag-Csat*np.real(lambertw(F))
+        d_nit=NH4_lag-Csat*np.real(lambertw(F))
+        # unit check:
+        #   mg/l - mg/l * 1
     else:
         raise Exception("bad method %s"%method)
         
     # add in loss term
-    NO3_pred = NO3_lag + nit_flux - daily_NO3_loss*age_in
-    NH4_pred = NH4_lag - nit_flux
+    NO3_pred = NO3_lag + d_nit - daily_NO3_loss*age_in
+    NH4_pred = NH4_lag - d_nit
     return NH4_pred,NO3_pred
 
 # now that necessary data is loaded in, plot maps
-
 
 ##
 
@@ -292,51 +298,191 @@ fig.savefig(os.path.join(fig_dir,'obs_vs_model_scatter.png'),dpi=150)
 
 
 ## 
+# Optimization:
 
+noffset = 0
+
+def cost_params(method='mm',
+                opt_stations=['dc','cr','cl','di','vs'],
+                **model_params):
+    rmses=[]
+    for sta in opt_stations:
+        dnum_in=age_data['dn'][sta][noffset:]
+        age_in =age_data['age'][sta][noffset:]
+        # Vectorized:
+        NH4_model,NO3_model = nitri_model(dnum_in,age_in,method=method,**model_params)
+
+        NO3_res = NO3_age[sta] - NO3_model
+        valid = np.isfinite(NO3_res)
+        res_val = NO3_res[valid]
+
+        rmses.append(np.sqrt(np.mean(res_val**2)))
+    return np.mean(rmses)
+
+
+##
+
+# First, just kmm
+
+
+
+# Ranges for parameter scan
+kmms=np.linspace(0.01,0.20,50)
+losses=np.linspace(0.000, 0.0030, 25)
+Csats=np.linspace(0.1, 1.9, 30)
+knis=np.linspace(0.01,0.20,30)
+
+opt_label='no_cachelib'
+opt_stations=['dc','cr',
+              'di','vs']
+
+#opt_label='with_cachelib'
+#opt_stations=['dc','cr','cl',
+#              'di','vs']
+
+# wrapper to hand to fmin 
+def cost_kmm(params):
+    return cost_params(daily_NO3_loss=0.0015,
+                       Csat=1.0,k_ni=0.0,kmm=params[0],
+                       opt_stations=opt_stations)
+
+res=fmin(cost_kmm,[0.010],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+rmses=[ cost_kmm([kmm]) for kmm in kmms]
+
+plt.figure(20).clf()
+fig,ax=plt.subplots(1,1,num=20)
+ax.plot(kmms,rmses)
+ax.set_ylabel('RMSE (mg/l)')
+ax.set_xlabel('k$_{mm}$ (mg-N/l / day)')
+
+ax.plot(best[0],best_cost,'ko')
+ax.text(best[0],best_cost,"\nk$_{mm}$=%.4f\nRMSE=%.4f"%(best[0],best_cost),va='top')
+ax.axis(ymin=0.01)
+
+# What are the units of kmm?
+# Based on original nitrate.py,
+# kmm = 1.5*Csat*k_ni ~ mg/l/day, interpreted as the maximum 0th order rate
+# k_ni ~ 1/day, i.e. the rate constant for a 1st order reaction
+# Csat ~ mg/l, the half-saturation concentration
+
+fig.savefig(os.path.join(fig_dir,'opt_kmm_%s.png'%opt_label),dpi=150)
+
+# Kmm and NO3 loss
+def cost_kmm_loss(params):
+    return cost_params(daily_NO3_loss=params[1],
+                       Csat=1.0,k_ni=0.0,kmm=params[0],
+                       opt_stations=opt_stations)
+
+rmse_kmm_loss=np.zeros( (len(kmms),len(losses)), np.float64)
+for row,kmm in enumerate(kmms):
+    for col,loss in enumerate(losses):
+        rmse_kmm_loss[row,col]=cost_kmm_loss([kmm,loss])
+res=fmin(cost_kmm_loss,[0.010,0.0015],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+plt.figure(21).clf()
+fig,ax=plt.subplots(1,1,num=21)
+fig.set_size_inches([6.4,4.8],forward=True)
+cset=ax.contourf(losses,kmms,rmse_kmm_loss,
+                 np.linspace(0.03,0.10,36),cmap=turbo,extend='both')
+plt.colorbar(cset,label='RMSE (mg/l)')
+ax.set_xlabel('Loss (day$^{-1}$)')
+ax.set_ylabel('k$_{mm}$ (mg/l / day)' )
+fig.subplots_adjust(left=0.17,bottom=0.15)
+
+ax.plot(best[1],best[0],'ko')
+ax.text(best[1],best[0],"k$_{mm}$=%.4f\nNO3 loss=%.5f\nRMSE=%.4f"%(best[0],best[1],best_cost),va='top')
+ax.axis(ymin=0.01)
+fig.savefig(os.path.join(fig_dir,'opt_kmm_loss_%s.png'%opt_label),dpi=150)
+
+
+# First order
+def cost_kni_loss(params):
+    return cost_params(daily_NO3_loss=params[1],
+                       Csat=0,k_ni=params[0],kmm=0.0,method='first',
+                       opt_stations=opt_stations)
+rmse_kni_loss=np.zeros( (len(knis),len(losses)), np.float64)
+for row,kni in enumerate(knis):
+    for col,loss in enumerate(losses):
+        rmse_kni_loss[row,col]=cost_kni_loss([kni,loss])
+res=fmin(cost_kni_loss,[0.010,0.0015],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+plt.figure(22).clf()
+fig,ax=plt.subplots(1,1,num=22)
+fig.set_size_inches([6.4,4.8],forward=True)
+cset=ax.contourf(losses,knis,rmse_kni_loss,
+                 np.linspace(0.03,0.10,36),cmap=turbo,extend='both')
+plt.colorbar(cset,label='RMSE (mg/l)')
+ax.set_xlabel('Loss (day$^{-1}$)')
+ax.set_ylabel('k$_{nit}$ (1/day)' )
+fig.subplots_adjust(left=0.17,bottom=0.15)
+ax.plot(best[1],best[0],'ko')
+ax.text(best[1],best[0],"k$_{ni}$=%.4f\nNO3 loss=%.5f\nRMSE=%.4f"%(best[0],best[1],best_cost),va='top')
+ax.axis(ymin=0.01)
+fig.savefig(os.path.join(fig_dir,'opt_kni_loss_%s.png'%opt_label),dpi=150)
+
+
+# Show parameter sweep for kmm and Csat
+def cost_kmm_Csat(params):
+    return cost_params(daily_NO3_loss=0.0015,
+                       Csat=params[1],k_ni=0.0,kmm=params[0],
+                       opt_stations=opt_stations)
+
+rmse_kmm_Csat=np.zeros( (len(kmms),len(Csats)), np.float64)
+for row,kmm in enumerate(kmms):
+    for col,Csat in enumerate(Csats):
+        rmse_kmm_Csat[row,col]=cost_kmm_Csat([kmm,Csat])
+res=fmin(cost_kmm_Csat,[0.010,1.0],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+plt.figure(23).clf()
+fig,ax=plt.subplots(1,1,num=23)
+fig.set_size_inches([6.4,4.8],forward=True)
+cset=ax.contourf(Csats,kmms,rmse_kmm_Csat,
+                 np.linspace(0.03,0.10,36),
+                 cmap=turbo,extend='both')
+plt.colorbar(cset,label='RMSE (mg/l)')
+ax.set_xlabel('C$_{sat}$ (mg/l)')
+ax.set_ylabel('k$_{mm}$ (mg/l / day)' )
+fig.subplots_adjust(left=0.17,bottom=0.15)
+
+ax.plot(best[1],best[0],'ko')
+ax.text(best[1],best[0],"k$_{mm}$=%.4f\nCsat=%.3f\nRMSE=%.4f"%(best[0],best[1],best_cost),va='top')
+#ax.axis(ymin=0.01)
+
+# Omitting Cache at Liberty
+
+fig.savefig(os.path.join(fig_dir,'opt_kmm_Csat_%s.png'%opt_label),dpi=150)
+
+
+##
 # evolution equation based on enrichment of NO3 by nitrification
 
 # interpolate all variables to same time steps, corresponding to July-Aug
 
-NO3_pred = {}
-NO3_mm = {}
-NH4_pred = {}
-NH4_mm = {}
-NH4_lag = {}
-NO3_lag = {}
-NH4_atten = {}
-NH4_atten_mm = {}
+NO3_1st = {}
+NO3_mm  = {}
+NH4_1st = {}
+NH4_mm  = {}
+
 pred_stations = ['dc','cr','cl','di','vs']
-#pred_stations = ['vs']
+
 npred = len(pred_stations)
 noffset = 0
 dt_days = np.diff(age_data['dn']['di'])[0]
-daily_NO3_loss = 0.0015
+model_params=dict(daily_NO3_loss = 0.0015,
+                  Csat=1.0,k_ni=0.08,kmm=0.12)
+
 for sta in pred_stations:
-    NO3_pred[sta] = np.zeros_like(age_data['dn'][sta])
-    NH4_pred[sta] = np.zeros_like(age_data['dn'][sta])
-    NH4_lag[sta] = np.zeros_like(age_data['dn'][sta]) # lagged boundary NH4
-    NO3_lag[sta] = np.zeros_like(age_data['dn'][sta]) # lagged boundary NO3
-    NH4_atten[sta] = np.zeros_like(age_data['dn'][sta])
-    NO3_mm[sta] = np.zeros_like(age_data['dn'][sta])
-    NH4_mm[sta] = np.zeros_like(age_data['dn'][sta])
-    for nloop, dn in enumerate(age_data['dn'][sta][noffset:]):
-        n = nloop + noffset
-        dn_lagged = age_data['dn'][sta][n] - age_data['age'][sta][n] # RH: age =>age_data['age']
-        n_NO3 = np.where(dn_NO3['fp']>=dn_lagged)[0][0]
-        #pdb.set_trace()
-        n_NH4 = np.where(NH4_dn>=dn_lagged)[0][0]
-        NH4_lag[sta][n] = NH4_fp[n_NH4]
-        NH4_atten[sta][n] = 1.-math.exp(-k_ni*age_data['age'][sta][n])
-        NO3_lag[sta][n] = NO3['fp_lp'][n_NO3]
-        NO3_pred[sta][n] = NO3_lag[sta][n] + NH4_lag[sta][n]*NH4_atten[sta][n]
-        NH4_pred[sta][n] = NH4_fp[n_NH4]*math.exp(-k_ni*age_data['age'][sta][n])
-        # Michaelis Menten
-        # Analytical MM:
-        F=NH4_lag[sta][n]/Csat*np.exp(NH4_lag[sta][n]/Csat-kmm/Csat*age_data['age'][sta][n])
-        NH4_mm[sta][n] = Csat*np.real(lambertw(F))
-        NO3_mm[sta][n] = NO3_lag[sta][n] + NH4_lag[sta][n] - NH4_mm[sta][n]
-        # add in loss term
-        NO3_mm[sta][n] -= daily_NO3_loss*age_data['age'][sta][n]
+    dnum_in=age_data['dn'][sta][noffset:]
+    age_in =age_data['age'][sta][noffset:]
+    # Vectorized:
+    NH4_mm[sta],NO3_mm[sta] = nitri_model(dnum_in,age_in,**model_params)
+    NH4_1st[sta],NO3_1st[sta] = nitri_model(dnum_in,age_in,method='first',**model_params)
+
 
 
 ##         
@@ -347,8 +493,8 @@ nplot = len(plot_stations)
 for method in methods:
 
     if method == 'first':
-        NO3_plot = NO3_pred
-        NH4_plot = NH4_pred
+        NO3_plot = NO3_1st
+        NH4_plot = NH4_1st
     elif method == 'mm':
         NO3_plot = NO3_mm
         NH4_plot = NH4_mm
