@@ -241,7 +241,8 @@ dnums = uw_df_thin['dnums'].values
 uw_age = uw_df_thin['age'].values # RH: used to be just 'age'
 
 # 3.2ms
-NH4_mm,NO3_mm = nitri_model(dnums,uw_age,k_ni=0.08,kmm=0.12,Csat=1.0,daily_NO3_loss=0.0015)
+# Now updated to use optimized values 
+NH4_mm,NO3_mm = nitri_model(dnums,uw_age,k_ni=np.nan,kmm=0.053,Csat=0.35,daily_NO3_loss=0.0021)
 
 # plot maps
 plt.figure(1).clf()
@@ -267,34 +268,93 @@ fig.savefig(os.path.join(fig_dir,'obs_vs_model_map.png'),dpi=150)
 ##
 
 # Scatter of the same thing
-plt.figure(2).clf()
-fig,axs=plt.subplots(1,2,num=2)
-fig.set_size_inches([12,7],forward=True)
 x = uw_df_thin['x'].values
 y = uw_df_thin['y'].values
 
-in_corridor=np.array([common.sac_poly.contains( geometry.Point(pnt) )
-                      for pnt in np.c_[x,y] ])
+from stompy.spatial import wkb2shp
+regions=wkb2shp.shp2geom('regions_v00.shp')
+
+#in_corridor=np.array([common.sac_poly.contains( geometry.Point(pnt) )
+#                      for pnt in np.c_[x,y] ])
+
+by_region={} # bitmask for each region
+for feat in regions:
+    by_region[feat['name']]=np.array([feat['geom'].contains( geometry.Point(pnt) )
+                                      for pnt in np.c_[x,y] ])
+    
 
 NO3_obs = uw_df_thin['NO3-N'].values
 NH4_obs = uw_df_thin['x'].values
 
-for ax in axs:
+region_labels={'sac':'Mainstem Sac.',
+               'cache':'Cache Slough Complex',
+               'suisun':'Suisun Bay',
+               'south_interior':'Interior and South Delta'}
+colors=['tab:Blue','tab:Orange','tab:Red','tab:Green']
+
+
+## Scatter, colored by regions
+plt.figure(2).clf()
+fig,(ax_map,ax)=plt.subplots(1,2,num=2)
+fig.set_size_inches([12,7],forward=True)
+
+ax_map.axis('equal')
+ax_map.axis('off')
+plot_wkb.plot_wkb(grd_poly,ax=ax_map,color='0.8',zorder=-2)
+scats=[]
+# Choose a nicer order for layering
+region_names=['south_interior','cache','sac','suisun']
+for region,col in zip(region_names,colors):
     # Coloring by dnum wasn't that helpful.
-    scat1=ax.scatter(NO3_obs[~in_corridor], NO3_mm[~in_corridor], s=5, color='0.85',label="Off axis")
-    scat2=ax.scatter(NO3_obs[in_corridor], NO3_mm[in_corridor], s=20, color='tab:blue',label="Sac corridor")
+    mask=by_region[region]
+    scat=ax.scatter(NO3_obs[mask], NO3_mm[mask], s=4, color=col,label=region_labels[region])
+    scat_map=ax_map.scatter(x[mask], y[mask], s=4, color=col,label=region_labels[region])
+    
+ax.set_xlabel('Observed NO$_3$')
+ax.set_ylabel('Predicted NO$_3$')
+ax.plot([0,0.6],[0,0.6],color='k',lw=0.5)
+ax.set_aspect(1.0)
+ax.set_adjustable('box')
+ax.axis(xmax=0.45,xmin=0,ymin=0.0,ymax=0.45)
+ax_map.legend(loc='lower left',frameon=0)
+
+ax_map.axis( (579000., 656131., 4175818., 4283670.) )
+fig.tight_layout()
+
+fig.savefig(os.path.join(fig_dir,'obs_vs_model_scatter_regions.png'),dpi=150)
+
+## Scatter, colored by age, conc
+for i,scal in enumerate(['age','conc']):
+    plt.figure(3+i).clf()
+    fig,(ax_map,ax)=plt.subplots(1,2,num=3+i)
+    fig.set_size_inches([12,7],forward=True)
+
+    ax_map.axis('equal')
+    ax_map.axis('off')
+    plot_wkb.plot_wkb(grd_poly,ax=ax_map,color='0.8',zorder=-2)
+
+    val=uw_df_thin[scal]
+    scat=ax.scatter(NO3_obs, NO3_mm, 4, val)
+    scat_map=ax_map.scatter(x, y, 4, val)
+        
     ax.set_xlabel('Observed NO$_3$')
     ax.set_ylabel('Predicted NO$_3$')
+    ax.plot([0,0.6],[0,0.6],color='k',lw=0.5)
+    ax.set_aspect(1.0)
+    ax.set_adjustable('box')
+    ax.axis(xmax=0.45,xmin=0,ymin=0.0,ymax=0.45)
 
-axs[1].plot([0,0.6],[0,0.6],color='tab:red',lw=0.5)
+    if scal=='age':
+        plt.setp([scat,scat_map], clim=[0,40])
+        plt.colorbar(scat_map,label="Age (d)")
+    elif scal=='conc':
+        plt.setp([scat,scat_map], clim=[0,1])
+        plt.colorbar(scat_map,label="Concentration (-)")
 
-axs[1].axis(xmax=0.45,xmin=0,ymin=0.13,ymax=0.48)
-axs[0].axis(xmax=2.00,xmin=0,ymin=0.13,ymax=0.48)
-axs[1].legend(loc='lower right')
-plt.ion()
-plt.show()
+    ax_map.axis( (579000., 656131., 4175818., 4283670.) )
+    fig.tight_layout()
 
-fig.savefig(os.path.join(fig_dir,'obs_vs_model_scatter.png'),dpi=150)
+    fig.savefig(os.path.join(fig_dir,'obs_vs_model_scatter_%s.png'%scal),dpi=150)
 
 
 ## 
@@ -457,6 +517,20 @@ ax.text(best[1],best[0],"k$_{mm}$=%.4f\nCsat=%.3f\nRMSE=%.4f"%(best[0],best[1],b
 
 fig.savefig(os.path.join(fig_dir,'opt_kmm_Csat_%s.png'%opt_label),dpi=150)
 
+##
+
+# And optimization on all 3 parameters
+def cost_kmm_Csat_loss(params):
+    return cost_params(daily_NO3_loss=params[2],
+                       Csat=params[1],k_ni=0.0,kmm=params[0],
+                       opt_stations=opt_stations)
+res=fmin(cost_kmm_Csat_loss,[0.010,1.0,0.0015],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+# kmm=0.053 mg/l/day
+# Csat=0.35 mg/l
+# NO3 loss=0.0021 1/day
+# RMSE, without Cache: 0.0346
 
 ##
 # evolution equation based on enrichment of NO3 by nitrification

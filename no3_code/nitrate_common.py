@@ -6,6 +6,10 @@ import pyproj
 from netCDF4 import Dataset, num2date
 from stompy.grid import unstructured_grid
 
+from obsdata_utils import save_current_file, get_var, get_var_dss
+from obsdata_utils import get_var_dss_light
+
+
 grd_fn=r"LTO_Restoration_2018_h.grd"
 
 def load_underway(extract_from_nc=0,thin='mean'):

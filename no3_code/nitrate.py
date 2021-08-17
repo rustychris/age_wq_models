@@ -276,13 +276,16 @@ flow['sr_lp'] = lowpass_godin(flow['sr'], dn_flow['sr'], ends='nan')
 # NH4 - typical Sac Regional NH4 in July/Aug from Kraus spreadsheet for 2020
 NH4_sr = 30 # mg/L as N
 NH4_am_uM = 1.0 # uM
-NH4_am = (NH4_am_uM/1000.)*N_g 
-Csat=1.0
+NH4_am = (NH4_am_uM/1000.)*N_g
+
+# Changed to the optimized values ( fn(kmm,Csat,loss), ignoring Cache-Lib)
+Csat=0.35
 k_ni = 0.08
 #k_ni = 0.09
 #k_ni = 0.05
 #kmm = 2*Csat*k_ni
-kmm = 1.5*Csat*k_ni 
+kmm = 0.053 # 1.5*Csat*k_ni
+daily_NO3_loss=0.0021
 
 #def dCdtMM(t,C):
 #    return -kmm*C/(Csat+C)
@@ -409,7 +412,7 @@ if 0:
     
 ##
 # now that necessary data is loaded in, plot maps
-daily_NO3_loss = 0.0015
+# daily_NO3_loss = 0.0015 # defined above
 NO3_pred = np.zeros(nrows, np.float64)
 NH4_pred = np.zeros_like(NO3_pred)
 NH4_lag = np.zeros_like(NO3_pred) # lagged boundary NH4
@@ -438,7 +441,7 @@ for nr in range(nrows):
 
 
 ## RH
-if 1:
+if 0:
     # Did the change in FP do anything for the underway predictions?
     # Have to run the code above once with the
     # dcc fill in enabled, save the result,
