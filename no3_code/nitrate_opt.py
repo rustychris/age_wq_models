@@ -60,7 +60,32 @@ nrows = len(uw_df_thin)
 
 ##
 
-fig_dir="fig000"
+uw_df_veg=pd.read_csv('uw_df_veg.csv') # 94242 rows
+
+# Group by cell i
+grped=uw_df_veg.groupby('i')
+assert np.allclose(grped['fav-age'].max().values,grped['fav-age'].min().values)# make sure there isn't temporal variation hiding in there
+#uw_df_veg['mean_fav']=uw_df_veg['fav-age']/uw_df_veg['age']
+#uw_df_veg['mean_sav']=uw_df_veg['sav-age']/uw_df_veg['age']
+#uw_df_veg['mean_marsh']=uw_df_veg['marsh-age']/uw_df_veg['age']
+
+# These are by cell
+#mean_fav  =uw_df_veg.groupby('i')['mean_fav'].mean()
+#mean_sav  =uw_df_veg.groupby('i')['mean_sav'].mean()
+#mean_marsh=uw_df_veg.groupby('i')['mean_marsh'].mean()
+
+fav_age=uw_df_veg.groupby('i')['fav-age'].mean()
+sav_age=uw_df_veg.groupby('i')['sav-age'].mean()
+msh_age=uw_df_veg.groupby('i')['marsh-age'].mean()
+
+uw_df_thin['fav_age']  =fav_age[uw_df_thin['i'].values].values
+uw_df_thin['sav_age']  =sav_age[uw_df_thin['i'].values].values
+uw_df_thin['marsh_age']=msh_age[uw_df_thin['i'].values].values
+
+## 
+
+fig_dir="fig001" # new uw_df.csv from Ed with veg data, but only to get veg data
+
 if not os.path.exists(fig_dir):
     os.mkdir(fig_dir)
     
@@ -251,31 +276,45 @@ fig.set_size_inches([12,12],forward=True)
 x = uw_df_thin['x'].values
 y = uw_df_thin['y'].values
 NO3_obs = uw_df_thin['NO3-N'].values
-NH4_obs = uw_df_thin['x'].values
-cmax = 0.4
+NH4_obs = uw_df_thin['NH4-N'].values
+cmax = 0.8
 sc_obs = ax.scatter(x, y, c=NO3_obs, cmap=jet, s=60, vmin=0, vmax=cmax)
 sc_mm = ax.scatter(x, y, c=NO3_mm, cmap=jet, s=5, vmin=0, vmax=cmax)
 plt.ion()
-plt.colorbar(sc_obs,label="NO$_3$ (mg/l)")
+plt.colorbar(sc_obs,label="NO$_3$ (mg-N/l)")
 ax.text(0.98,0.95,"Outer=observed\nInner=MM model",transform=ax.transAxes,ha='right')
 ax.axis('off')
 ax.axis('equal')
 plot_wkb.plot_wkb(grd_poly,ax=ax,fc='0.8',ec='0.8',zorder=-2)
 fig.tight_layout()
 plt.show()
-fig.savefig(os.path.join(fig_dir,'obs_vs_model_map.png'),dpi=150)
+fig.savefig(os.path.join(fig_dir,'obs_vs_model_NO3_map.png'),dpi=150)
+
+# and NH4
+plt.figure(31).clf()
+fig,ax=plt.subplots(1,1,num=31)
+fig.set_size_inches([12,12],forward=True)
+cmax = 2.0
+sc_obs = ax.scatter(x, y, c=NH4_obs, cmap=jet, s=60, vmin=0, vmax=cmax)
+sc_mm = ax.scatter(x, y, c=NH4_mm, cmap=jet, s=5, vmin=0, vmax=cmax)
+plt.ion()
+plt.colorbar(sc_obs,label="NH$_4$ (mg-N/l)")
+ax.text(0.98,0.95,"Outer=observed\nInner=MM model",transform=ax.transAxes,ha='right')
+ax.axis('off')
+ax.axis('equal')
+plot_wkb.plot_wkb(grd_poly,ax=ax,fc='0.8',ec='0.8',zorder=-2)
+fig.tight_layout()
+plt.show()
+fig.savefig(os.path.join(fig_dir,'obs_vs_model_NH4_map.png'),dpi=150)
 
 ##
 
-# Scatter of the same thing
+# Scatters of the same thing
 x = uw_df_thin['x'].values
 y = uw_df_thin['y'].values
 
 from stompy.spatial import wkb2shp
 regions=wkb2shp.shp2geom('regions_v00.shp')
-
-#in_corridor=np.array([common.sac_poly.contains( geometry.Point(pnt) )
-#                      for pnt in np.c_[x,y] ])
 
 by_region={} # bitmask for each region
 for feat in regions:
@@ -284,7 +323,7 @@ for feat in regions:
     
 
 NO3_obs = uw_df_thin['NO3-N'].values
-NH4_obs = uw_df_thin['x'].values
+NH4_obs = uw_df_thin['NH4-N'].values
 
 region_labels={'sac':'Mainstem Sac.',
                'cache':'Cache Slough Complex',
@@ -292,69 +331,90 @@ region_labels={'sac':'Mainstem Sac.',
                'south_interior':'Interior and South Delta'}
 colors=['tab:Blue','tab:Orange','tab:Red','tab:Green']
 
-
-## Scatter, colored by regions
-plt.figure(2).clf()
-fig,(ax_map,ax)=plt.subplots(1,2,num=2)
-fig.set_size_inches([12,7],forward=True)
-
-ax_map.axis('equal')
-ax_map.axis('off')
-plot_wkb.plot_wkb(grd_poly,ax=ax_map,color='0.8',zorder=-2)
-scats=[]
-# Choose a nicer order for layering
-region_names=['south_interior','cache','sac','suisun']
-for region,col in zip(region_names,colors):
-    # Coloring by dnum wasn't that helpful.
-    mask=by_region[region]
-    scat=ax.scatter(NO3_obs[mask], NO3_mm[mask], s=4, color=col,label=region_labels[region])
-    scat_map=ax_map.scatter(x[mask], y[mask], s=4, color=col,label=region_labels[region])
-    
-ax.set_xlabel('Observed NO$_3$')
-ax.set_ylabel('Predicted NO$_3$')
-ax.plot([0,0.6],[0,0.6],color='k',lw=0.5)
-ax.set_aspect(1.0)
-ax.set_adjustable('box')
-ax.axis(xmax=0.45,xmin=0,ymin=0.0,ymax=0.45)
-ax_map.legend(loc='lower left',frameon=0)
-
-ax_map.axis( (579000., 656131., 4175818., 4283670.) )
-fig.tight_layout()
-
-fig.savefig(os.path.join(fig_dir,'obs_vs_model_scatter_regions.png'),dpi=150)
-
-## Scatter, colored by age, conc
-for i,scal in enumerate(['age','conc']):
-    plt.figure(3+i).clf()
-    fig,(ax_map,ax)=plt.subplots(1,2,num=3+i)
+def scatter_figure(analyte,scalar,zoom,fig_num):
+    plt.figure(fig_num).clf()
+    fig,(ax_map,ax)=plt.subplots(1,2,num=fig_num)
     fig.set_size_inches([12,7],forward=True)
 
     ax_map.axis('equal')
     ax_map.axis('off')
     plot_wkb.plot_wkb(grd_poly,ax=ax_map,color='0.8',zorder=-2)
 
-    val=uw_df_thin[scal]
-    scat=ax.scatter(NO3_obs, NO3_mm, 4, val)
-    scat_map=ax_map.scatter(x, y, 4, val)
+    if analyte=='no3':
+        ana_obs=NO3_obs
+        ana_mod=NO3_mm
+        ana='NO$_3$'
+    elif analyte=='nh4':
+        ana_obs=NH4_obs
+        ana_mod=NH4_mm
+        ana='NH$_4$'
         
-    ax.set_xlabel('Observed NO$_3$')
-    ax.set_ylabel('Predicted NO$_3$')
-    ax.plot([0,0.6],[0,0.6],color='k',lw=0.5)
+    if scalar=='region':
+        scats=[]
+        # Choose a nicer order for layering
+        region_names=['south_interior','cache','sac','suisun']
+        for region,col in zip(region_names,colors):
+            # Coloring by dnum wasn't that helpful.
+            mask=by_region[region]
+            scat=ax.scatter(ana_obs[mask], ana_mod[mask], s=4, color=col,label=region_labels[region])
+            scat_map=ax_map.scatter(x[mask], y[mask], s=4, color=col,label=region_labels[region])
+    else:
+        val=uw_df_thin[scalar]
+        scat=ax.scatter(ana_obs, ana_mod, 4, val)
+        scat_map=ax_map.scatter(x, y, 4, val)
+
+    ax.set_xlabel('Observed %s (mg-N/l)'%ana)
+    ax.set_ylabel('Predicted %s (mg-N/l)'%ana)
+    ax.plot([0,2.5],[0,2.5],color='k',lw=0.5)
     ax.set_aspect(1.0)
     ax.set_adjustable('box')
-    ax.axis(xmax=0.45,xmin=0,ymin=0.0,ymax=0.45)
 
-    if scal=='age':
-        plt.setp([scat,scat_map], clim=[0,40])
-        plt.colorbar(scat_map,label="Age (d)")
-    elif scal=='conc':
-        plt.setp([scat,scat_map], clim=[0,1])
-        plt.colorbar(scat_map,label="Concentration (-)")
+    if scalar=='region':
+        ax_map.legend(loc='lower left',frameon=0)
+    else:
+        if scalar=='age':
+            plt.colorbar(scat_map,label="Age (d)")
+        elif scalar=='conc':
+            plt.colorbar(scat_map,label="Concentration (-)")
+        elif scalar=='sav_age':
+            plt.colorbar(scat_map,label="SAV exposure (days)")
+        elif scalar=='fav_age':
+            plt.colorbar(scat_map,label="FAV exposure (days)")
+        elif scalar=='marsh_age':
+            plt.colorbar(scat_map,label="Marsh exposure (days)")
+        elif scalar=='dnums':
+            cbar=plt.colorbar(scat_map)
+            cbar.ax.set_yticklabels([d.strftime('%m/%d %H:%M')
+                                     for d in utils.to_datetime(cbar.get_ticks())])
+        else:
+            raise Exception(scalar)
 
     ax_map.axis( (579000., 656131., 4175818., 4283670.) )
+
+    if zoom=='zoomin':
+        ax.axis(xmin=0,xmax=0.45,ymin=0.0,ymax=0.45)
+    elif zoom=='zoomout':
+        ax.axis(xmin=0,xmax=2.0,ymin=0.0,ymax=2.00)
+    else:
+        raise Exception(zoom)
     fig.tight_layout()
 
-    fig.savefig(os.path.join(fig_dir,'obs_vs_model_scatter_%s.png'%scal),dpi=150)
+    return fig
+
+
+analytes=['no3','nh4']
+scalars=['marsh_age','fav_age','sav_age'] #,'dnums','region','age','conc']
+zooms=['zoomin','zoomout']
+
+fig_num=100
+from itertools import product
+
+for analyte,scalar,zoom in product(analytes,scalars,zooms):
+    fig_num+=1
+    fig=scatter_figure(analyte,scalar,zoom,fig_num)
+    fig.savefig(os.path.join(fig_dir,
+                             'obs_vs_model_scatter_%s_%s_%s.png'%(analyte,scalar,zoom)),
+                dpi=150)
 
 
 ## 
@@ -606,6 +666,11 @@ for method in methods:
     ax[npred+2].legend()
     ax[npred+2].set_ylabel('Conc')
 
+    # Make all the legends the same layout
+    for a in ax:
+        a.legend(loc='center left',bbox_to_anchor=[1.04,0.5])
+    fig.subplots_adjust(right=0.88)
+    assert False
     fig.autofmt_xdate()
     plt.savefig(os.path.join(fig_dir,'%s.png'%method),bbox_inches='tight')
     plt.close()
@@ -705,3 +770,90 @@ for method in methods:
     sequence=['sta','rmse','se','r','wm']
     pd.DataFrame.from_dict(metrics).to_csv('%s_metrics.csv'%method,columns=sequence,index=False)
 
+##
+
+# RH: 
+# Underway vs station data comparison
+from stompy.spatial import proj_utils
+
+stations=pd.DataFrame.from_records( wkb2shp.shp2geom('../stations.shp'))
+
+ll=stations[ ['lon','lat'] ].values
+xy=proj_utils.mapper('WGS84','EPSG:26910')(ll)
+stations['x']=xy[:,0]
+stations['y']=xy[:,1]
+
+
+# plt.figure(37).clf()
+# fig,ax=plt.subplots(num=37)
+# ax.plot( uw_df_thin.x,uw_df_thin.y, 'g.')
+# ax.plot( stations.x,stations.y,'mo')
+# ax.axis('equal')
+# ax.axis('off')
+
+##
+thresh=150.0 # (m)
+
+stations_to_sta={ # Map names from shapefile to the codes used for the stations
+    'Sac ab DCC':'dc',
+    'Cache ab Ryer':'cr',
+    'Cache at Lib.':'cl',
+    'Sac. at Decker':'di',
+    'Van Sickle':'vs',
+    'Freeport':'fp'
+}
+
+uw_vs_stations=[]
+for idx,stn in stations.iterrows():
+    print(stn['sta'])
+
+    # find uw points nearby
+    dx=uw_df_thin.x - stn.x
+    dy=uw_df_thin.y - stn.y
+    rad=np.sqrt(dx**2+dy**2)
+    sel=(rad<=thresh)
+
+    uw_at_station=uw_df_thin[sel][ ['dnums','i','n','NH4-N','NO3-N','Temp (C) (EXO) HR',
+                                    'Salinity (PSU) (TSG) HR','DO (mg/L) (EXO) HR']].copy()
+    uw_at_station=uw_at_station.rename({'NO3-N':'uw_no3',
+                                        'NH4-N':'uw_nh4'},axis=1)
+    uw_dn=uw_at_station['dnums']
+    sta=stations_to_sta[stn['sta']]
+    stn_dn=dn_NO3[sta]
+    stn_no3=NO3[sta]
+    
+    station_no3=np.interp( uw_dn, stn_dn, stn_no3)
+    dn_offset=utils.nearest_val(stn_dn,uw_dn) - uw_dn
+
+    uw_at_station['station_no3']=station_no3
+    uw_at_station['dn_offset']=dn_offset
+    uw_at_station['sta']=sta
+    uw_at_station['station']=stn['sta']
+    
+    uw_vs_stations.append(uw_at_station)
+
+uw_vs_stations=pd.concat(uw_vs_stations)
+
+plt.figure(38).clf()
+fig,ax=plt.subplots(num=38)
+
+for sta in uw_vs_stations['station'].unique():
+    sel=uw_vs_stations['station']==sta
+    
+    ax.plot( uw_vs_stations['uw_no3'][sel],
+             uw_vs_stations['station_no3'][sel],
+             marker='o',alpha=0.65,lw=0,
+             label=sta)
+
+ax.set_adjustable('box')
+ax.set_aspect(1.0)
+ax.plot([0,0.6],[0,0.6],'k-',lw=0.7,alpha=0.5)
+ax.axis([0,0.5,0.0,0.5])
+
+ax.set_xlabel('Underway NO$_3$ (mg-N/l)')
+ax.set_ylabel('Station NO$_3$ (mg-N/l)')
+
+ax.legend(loc='upper left', frameon=0, bbox_to_anchor=[1.02,1.0])
+
+fig.subplots_adjust(right=0.65)
+fig.savefig('underway-station-comparison.png',dpi=150)

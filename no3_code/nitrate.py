@@ -46,6 +46,10 @@ import pdb
 
 plt.style.use('meps.mplstyle')
 
+fig_dir='fig_nit_000'
+if not os.path.exists(fig_dir):
+    os.mkdir(fig_dir)
+
 N_g = 14.0067 # weight of a mole of N
 
 grd_fn=r"LTO_Restoration_2018_h.grd"
@@ -280,7 +284,7 @@ NH4_am = (NH4_am_uM/1000.)*N_g
 
 # Changed to the optimized values ( fn(kmm,Csat,loss), ignoring Cache-Lib)
 Csat=0.35
-k_ni = 0.08
+k_ni = 0.08 # non-optimized.
 #k_ni = 0.09
 #k_ni = 0.05
 #kmm = 2*Csat*k_ni
@@ -408,7 +412,7 @@ if 0:
 
     ax.legend()
     ax.axis((736920.6060114561, 737038.9861075104, -0.006265952088709725, 0.5495188518367599))
-    fig.savefig('freeport-lag-filled.png')
+    fig.savefig(os.path.join(fig_dir,'freeport-lag-filled.png'))
     
 ##
 # now that necessary data is loaded in, plot maps
@@ -463,7 +467,7 @@ if 0:
     cax=fig.add_axes([0.55,0.9,0.20,0.02])
     plt.colorbar(scat,cax=cax,label='NO3 lagged DC - fill FP\n mg-N/l',orientation='horizontal')
     fig.tight_layout()
-    fig.savefig('compare_fill_vs_lag.png',dpi=150)
+    fig.savefig(os.path.join(fig_dir,'compare_fill_vs_lag.png'),dpi=150)
 
 ## 
 # plot maps
@@ -485,7 +489,7 @@ ax.axis('equal')
 plot_wkb.plot_wkb(grd_poly,ax=ax,fc='0.8',ec='0.8',zorder=-2)
 fig.tight_layout()
 plt.show()
-fig.savefig('obs_vs_model_map.png',dpi=150)
+fig.savefig(os.path.join(fig_dir,'obs_vs_model_map.png'),dpi=150)
 
 ##
 
@@ -531,7 +535,7 @@ axs[1].legend(loc='lower right')
 plt.ion()
 plt.show()
 
-fig.savefig('obs_vs_model_scatter.png',dpi=150)
+fig.savefig(os.path.join(fig_dir,'obs_vs_model_scatter.png'),dpi=150)
 
 
 ## 
@@ -597,39 +601,51 @@ for method in methods:
         print( "invalid method")
         sys.exit(0)
     # make time series plot
-    fig, ax = plt.subplots(npred+3, 1, sharex="all",figsize=[16,16])
+    plt.figure(10).clf()
+    fig, ax = plt.subplots(npred+3, 1, sharex="all",num=10)
+    fig.set_size_inches([12,12],forward=True)
+    
     for ns, sta in enumerate(plot_stations):
         ax[ns].plot_date(dn_age[sta],NO3_age[sta],'-',label='observed')
         ax[ns].plot_date(dn_age[sta],NO3_plot[sta],'-',label='predicted')
         ax[ns].plot_date(dn_age[sta],NO3_age['fp'],'-',label='Freeport')
-        ax[ns].legend()
         ax[ns].set_xlim(dn_age[sta][0],dn_age[sta][-1])
         ax[ns].set_ylim(0,0.6)
         ax[ns].set_ylabel('NO3 N')
-        ax[ns].set_title(label_dict[sta])
+        #ax[ns].set_title(label_dict[sta])
+        ax[ns].text(0.01,0.95,label_dict[sta],transform=ax[ns].transAxes,va='top')
 
     ax[npred].plot(NH4_dn,NH4_fp,label='Freeport')
     for sta in plot_stations:
         ax[npred].plot(dn_age[sta],NH4_plot[sta],label=label_dict[sta])
     ax[npred].set_xlim(dn_age['di'][0],dn_age['di'][-1])
-    ax[npred].legend()
+    
     ax[npred].set_ylabel('NH4 N')
 
+    # Fake freeport so the legends match
+    ax[npred+1].plot([],[],label='Freeport')
     for sta in plot_stations:
         ax[npred+1].plot(dn_age[sta],age[sta],label=label_dict[sta])
     ax[npred+1].set_xlim(dn_age['di'][0],dn_age['di'][-1])
-    ax[npred+1].legend()
     ax[npred+1].set_ylabel('Age')
 
+    ax[npred+2].plot([],[],label='Freeport')
     for sta in plot_stations:
         ax[npred+2].plot(dn_age[sta],conc[sta],label=label_dict[sta])
     ax[npred+2].set_xlim(dn_age['di'][0],dn_age['di'][-1])
-    ax[npred+2].legend()
     ax[npred+2].set_ylabel('Conc')
 
     fig.autofmt_xdate()
-    plt.savefig('%s.png'%method,bbox_inches='tight')
+    #fig.tight_layout()
+    fig.subplots_adjust(right=0.85,left=0.08,top=0.97,bottom=0.08,hspace=0.2)
+
+    ax[0].legend(loc='upper left',bbox_to_anchor=[1.01,1.1],frameon=0)
+    ax[npred].legend(loc='upper left',bbox_to_anchor=[1.01,1.1],frameon=0)
+
+    plt.savefig(os.path.join(fig_dir,'%s.png'%method),bbox_inches='tight')
+    
     plt.close()
+
 
     # make residual plot
     res_vars = age_vars # do everything for now
@@ -722,7 +738,7 @@ for method in methods:
 
     fig.tight_layout()
     # pdb.set_trace()
-    plt.savefig('%s_residual.png'%method,bbox_inches='tight')
+    plt.savefig(os.path.join(fig_dir,'%s_residual.png'%method),bbox_inches='tight')
     plt.close()
     sequence=['sta','rmse','se','r','wm']
     pd.DataFrame.from_dict(metrics).to_csv('%s_metrics.csv'%method,columns=sequence,index=False)

@@ -2,3 +2,12 @@ hec_script.py
 tmpDSS*
 UnTRIM_flow_BCs_2011-2019.dss
 __pycache__
+*.png
+mm_metrics.csv
+*.grd
+*.dss
+first_metrics.csv
+uw_df.csv
+uw_df_veg.csv
+fig0*
+output.csv
