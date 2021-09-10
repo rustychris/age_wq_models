@@ -146,7 +146,7 @@ def load_underway(extract_from_nc=0,thin='mean'):
 
         uw_df.to_csv('uw_df.csv',index=False)
     else:
-        uw_df = pd.read_csv('uw_df.csv')
+        uw_df = pd.read_csv('inputs-20210827/uw_df.csv')
         # Grab the grid, too
         # What's slow in reading this grid? 25s. No single hot spot, just
         # lots of slow file reading/parsing.
@@ -173,11 +173,16 @@ def load_underway(extract_from_nc=0,thin='mean'):
     return uw_df_thin,grd
 
 ## Reading tracer output from DSS 
-age_vars = ['age','conc','depth','temperature']
+age_vars = ['age','conc','depth',#'temperature'
+            'fav-age','sav-age','marsh-age']
 var_label_dict = {'age':'Age [days]',
                   'conc':'Concentration',
                   'depth':'Depth [m]',
-                  'temperature':'Temperature [$^\circ$C]'}
+                  'fav-age':'FAV age [days]',
+                  'sav-age':'SAV age [days]',
+                  'marsh-age':'Marsh age [days]',
+                  #'temperature':'Temperature [$^\circ$C]'
+}
 age_stations=['dc','cr','cl','di','vs']
 # File also has DWSC, but I think Ed was omitting for a reason
 label_dict = {'dc':'Sac ab DCC',
@@ -188,7 +193,7 @@ label_dict = {'dc':'Sac ab DCC',
 def read_tracer_output():
     # read in information needed for NO3 predictions
     # read age first because will use selected time for interpolation etc.
-    age_dss_fname = 'AgeScalars.dss'
+    age_dss_fname = 'inputs-20210827/AgeScalars.dss'
     rec_template = '/UT/$STA$/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
     #rec_template = '/UT/%(STA)s/$VAR$//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
     #rec_template%dss_sta_dict
