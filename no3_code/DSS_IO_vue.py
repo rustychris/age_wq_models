@@ -80,6 +80,9 @@ class DSS_IO(object):
 
     def read_DSS_record(self, record_name, tstart, tend):
         df=worker(self.dss_file_name,record_name,tstart,tend,self.script_fn)
+        if len(df)==0:
+            log.warning("DSS path %s had no records"%(record_name))
+            return [[],[]]
         
         date_sel=(df['time'].values>=np.datetime64(tstart) ) & ( df['time'].values<=np.datetime64(tend))
         df=df[date_sel]
