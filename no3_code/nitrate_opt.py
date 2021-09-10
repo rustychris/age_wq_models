@@ -25,6 +25,8 @@ from stompy.utils import fill_invalid, to_dt64, to_datetime, to_dnum, interp_nea
 from stompy.filters import lowpass_godin, lowpass
 from stompy.grid import unstructured_grid 
 from scipy.interpolate import interp1d
+import stompy.plot.cmap as scmap
+turbo=scmap.load_gradient('turbo.cpt')
 from sklearn.metrics import mean_squared_error
 import math
 import copy
@@ -60,37 +62,18 @@ nrows = len(uw_df_thin)
 
 ##
 
-uw_df_veg=pd.read_csv('uw_df_veg.csv') # 94242 rows
 
-# Group by cell i
-grped=uw_df_veg.groupby('i')
-assert np.allclose(grped['fav-age'].max().values,grped['fav-age'].min().values)# make sure there isn't temporal variation hiding in there
-#uw_df_veg['mean_fav']=uw_df_veg['fav-age']/uw_df_veg['age']
-#uw_df_veg['mean_sav']=uw_df_veg['sav-age']/uw_df_veg['age']
-#uw_df_veg['mean_marsh']=uw_df_veg['marsh-age']/uw_df_veg['age']
-
-# These are by cell
-#mean_fav  =uw_df_veg.groupby('i')['mean_fav'].mean()
-#mean_sav  =uw_df_veg.groupby('i')['mean_sav'].mean()
-#mean_marsh=uw_df_veg.groupby('i')['mean_marsh'].mean()
-
-fav_age=uw_df_veg.groupby('i')['fav-age'].mean()
-sav_age=uw_df_veg.groupby('i')['sav-age'].mean()
-msh_age=uw_df_veg.groupby('i')['marsh-age'].mean()
-
-uw_df_thin['fav_age']  =fav_age[uw_df_thin['i'].values].values
-uw_df_thin['sav_age']  =sav_age[uw_df_thin['i'].values].values
-uw_df_thin['marsh_age']=msh_age[uw_df_thin['i'].values].values
-
-## 
-
-fig_dir="fig001" # new uw_df.csv from Ed with veg data, but only to get veg data
+#fig_dir="fig001" # new uw_df.csv from Ed with veg data, but only to get veg data
+#fig_dir="fig002" # new uw_df.csv with complete veg
+fig_dir="fig003" # regen plots, nothing really new
 
 if not os.path.exists(fig_dir):
     os.mkdir(fig_dir)
     
 ##  Read tracer outputs, including age, depth, temperature
 
+# 2021-08-29: No record for '/UT/CACHE_AB_RYER/temperature//30MIN/TEMPERATURE_2018_16_FEBSTART_SAC/'
+#    new AgeScalars.dss does not include temperature
 age_data=common.read_tracer_output()
 
 # age_data[variable][station] = time series array
@@ -225,9 +208,14 @@ assert np.all(np.diff(NH4_dn)>=0) # just to be sure
 
     
 # How slow is the forward model with no preprocessing?
-def nitri_model(dnums_in,age_in,
-                k_ni,kmm,daily_NO3_loss,Csat,method='mm'):
+def nitri_model(df, # dnums_in,age_in,sav_in,fav_in,marsh_in,
+                k_ni,kmm,daily_NO3_loss,Csat,
+                sav_loss=0.0,fav_loss=0.0,marsh_loss=0.0,
+                method='mm'):
     # These could be preprocessed
+    dnums_in=df['dnums'].values
+    age_in=df['age'].values
+    
     dn_lagged = dnums_in - age_in
     n_NO3=np.searchsorted(dn_NO3['fp'],dn_lagged)
     n_NH4 = np.searchsorted(NH4_dn,dn_lagged)
@@ -251,23 +239,57 @@ def nitri_model(dnums_in,age_in,
         #   mg/l - mg/l * 1
     else:
         raise Exception("bad method %s"%method)
-        
+
+    age_other=age_in-df['sav-age']-df['fav-age']-df['marsh-age']
+    
     # add in loss term
-    NO3_pred = NO3_lag + d_nit - daily_NO3_loss*age_in
+    NO3_pred = ( NO3_lag + d_nit - daily_NO3_loss*age_other
+                 - sav_loss*df['sav-age']
+                 - fav_loss*df['fav-age']
+                 - marsh_loss*df['marsh-age'])
     NH4_pred = NH4_lag - d_nit
     return NH4_pred,NO3_pred
 
-# now that necessary data is loaded in, plot maps
-
 ##
 
+# Plot the various fields:
+
+for i,scal in enumerate([#'conc', 'age', 'marsh-age',
+                         #'sav-age', 'fav-age', 'temperature', 'depth',
+                         'fCHLA (ug/L) (EXO) HR']):
+    # plot maps
+    plt.figure(i).clf()
+    fig,ax=plt.subplots(1,1,num=i)
+    fig.set_size_inches([10,12],forward=True)
+    x = uw_df_thin['x'].values
+    y = uw_df_thin['y'].values
+    s = uw_df_thin[scal].values
+    
+    sc_obs = ax.scatter(x, y, c=s, cmap=jet, s=60)
+    cax=fig.add_axes([0.2,0.6,0.02,0.25])
+    plt.ion()
+    plt.colorbar(sc_obs,cax=cax)
+    cax.set_title(scal,fontdict=dict(fontsize=24))
+    ax.axis('off')
+    ax.axis('equal')
+    plot_wkb.plot_wkb(grd_poly,ax=ax,fc='0.8',ec='0.8',zorder=-2)
+    fig.tight_layout()
+    plt.show()
+    fig.savefig(os.path.join(fig_dir,'map-tracer-%s.png'%scal),dpi=150)
+
+##
 # Run model
-dnums = uw_df_thin['dnums'].values
-uw_age = uw_df_thin['age'].values # RH: used to be just 'age'
+#dnums = uw_df_thin['dnums'].values
+#uw_age = uw_df_thin['age'].values # RH: used to be just 'age'
 
 # 3.2ms
 # Now updated to use optimized values 
-NH4_mm,NO3_mm = nitri_model(dnums,uw_age,k_ni=np.nan,kmm=0.053,Csat=0.35,daily_NO3_loss=0.0021)
+NH4_mm,NO3_mm = nitri_model(uw_df_thin,
+                            k_ni=np.nan,kmm=0.053,Csat=0.35,daily_NO3_loss=0.0021,
+                            sav_loss=0.00,
+                            #fav_loss=1.0,
+                            #marsh_loss=0.1
+)
 
 # plot maps
 plt.figure(1).clf()
@@ -289,6 +311,8 @@ plot_wkb.plot_wkb(grd_poly,ax=ax,fc='0.8',ec='0.8',zorder=-2)
 fig.tight_layout()
 plt.show()
 fig.savefig(os.path.join(fig_dir,'obs_vs_model_NO3_map.png'),dpi=150)
+
+##
 
 # and NH4
 plt.figure(31).clf()
@@ -321,7 +345,6 @@ for feat in regions:
     by_region[feat['name']]=np.array([feat['geom'].contains( geometry.Point(pnt) )
                                       for pnt in np.c_[x,y] ])
     
-
 NO3_obs = uw_df_thin['NO3-N'].values
 NH4_obs = uw_df_thin['NH4-N'].values
 
@@ -376,11 +399,11 @@ def scatter_figure(analyte,scalar,zoom,fig_num):
             plt.colorbar(scat_map,label="Age (d)")
         elif scalar=='conc':
             plt.colorbar(scat_map,label="Concentration (-)")
-        elif scalar=='sav_age':
+        elif scalar=='sav-age':
             plt.colorbar(scat_map,label="SAV exposure (days)")
-        elif scalar=='fav_age':
+        elif scalar=='fav-age':
             plt.colorbar(scat_map,label="FAV exposure (days)")
-        elif scalar=='marsh_age':
+        elif scalar=='marsh-age':
             plt.colorbar(scat_map,label="Marsh exposure (days)")
         elif scalar=='dnums':
             cbar=plt.colorbar(scat_map)
@@ -403,7 +426,7 @@ def scatter_figure(analyte,scalar,zoom,fig_num):
 
 
 analytes=['no3','nh4']
-scalars=['marsh_age','fav_age','sav_age'] #,'dnums','region','age','conc']
+scalars=['marsh-age','fav-age','sav-age'] #,'dnums','region','age','conc']
 zooms=['zoomin','zoomout']
 
 fig_num=100
@@ -421,16 +444,25 @@ for analyte,scalar,zoom in product(analytes,scalars,zooms):
 # Optimization:
 
 noffset = 0
+# Set up dataframes for stations
+sta_dfs={}
+for sta in age_data['dn']:
+    df=pd.DataFrame()
+    df['dnums']=age_data['dn'][sta][noffset:]
+    df['age'] =age_data['age'][sta][noffset:]
+    df['sav-age'] =age_data['sav-age'][sta][noffset:]
+    df['fav-age'] =age_data['fav-age'][sta][noffset:]
+    df['marsh-age'] =age_data['marsh-age'][sta][noffset:]
+    sta_dfs[sta]=df
+    
+##     
 
 def cost_params(method='mm',
                 opt_stations=['dc','cr','cl','di','vs'],
                 **model_params):
     rmses=[]
     for sta in opt_stations:
-        dnum_in=age_data['dn'][sta][noffset:]
-        age_in =age_data['age'][sta][noffset:]
-        # Vectorized:
-        NH4_model,NO3_model = nitri_model(dnum_in,age_in,method=method,**model_params)
+        NH4_model,NO3_model = nitri_model(sta_dfs[sta],method=method,**model_params)
 
         NO3_res = NO3_age[sta] - NO3_model
         valid = np.isfinite(NO3_res)
@@ -444,21 +476,19 @@ def cost_params(method='mm',
 
 # First, just kmm
 
-
-
 # Ranges for parameter scan
 kmms=np.linspace(0.01,0.20,50)
 losses=np.linspace(0.000, 0.0030, 25)
 Csats=np.linspace(0.1, 1.9, 30)
 knis=np.linspace(0.01,0.20,30)
 
-opt_label='no_cachelib'
-opt_stations=['dc','cr',
-              'di','vs']
-
-#opt_label='with_cachelib'
-#opt_stations=['dc','cr','cl',
+#opt_label='no_cachelib'
+#opt_stations=['dc','cr',
 #              'di','vs']
+
+opt_label='with_cachelib'
+opt_stations=['dc','cr','cl',
+              'di','vs']
 
 # wrapper to hand to fmin 
 def cost_kmm(params):
@@ -488,8 +518,8 @@ ax.axis(ymin=0.01)
 # Csat ~ mg/l, the half-saturation concentration
 
 fig.savefig(os.path.join(fig_dir,'opt_kmm_%s.png'%opt_label),dpi=150)
-
-# Kmm and NO3 loss
+## 
+# sweep for Kmm and NO3 loss
 def cost_kmm_loss(params):
     return cost_params(daily_NO3_loss=params[1],
                        Csat=1.0,k_ni=0.0,kmm=params[0],
@@ -508,8 +538,8 @@ fig.set_size_inches([6.4,4.8],forward=True)
 cset=ax.contourf(losses,kmms,rmse_kmm_loss,
                  np.linspace(0.03,0.10,36),cmap=turbo,extend='both')
 plt.colorbar(cset,label='RMSE (mg/l)')
-ax.set_xlabel('Loss (day$^{-1}$)')
-ax.set_ylabel('k$_{mm}$ (mg/l / day)' )
+ax.set_xlabel('Loss (mg/l/day)')
+ax.set_ylabel('k$_{mm}$ (mg/l/day)' )
 fig.subplots_adjust(left=0.17,bottom=0.15)
 
 ax.plot(best[1],best[0],'ko')
@@ -517,7 +547,71 @@ ax.text(best[1],best[0],"k$_{mm}$=%.4f\nNO3 loss=%.5f\nRMSE=%.4f"%(best[0],best[
 ax.axis(ymin=0.01)
 fig.savefig(os.path.join(fig_dir,'opt_kmm_loss_%s.png'%opt_label),dpi=150)
 
+##
+pm_losses=np.linspace(-0.0002, 0.0030, 25)
 
+# Start of refactor -- not yet complete.
+#  class Sweeper(object):
+#      tunable=['kmm','Csat','sav_loss','fav_loss','marsh_loss',
+#               'daily_NO3_loss']
+#      opt_stations=['dc', 'cr', 'cl', 'di', 'vs']
+#      def __init__(self,**kwargs):
+#          self.constants={}
+#          self.tuned={}
+#          for k in kwargs:
+#              if k in self.tunable:
+#                  if np.isscalar(kwargs[k]):
+#                      self.constants[k]=kwargs[k]
+#                  else:
+#                      self.tuned[k]=kwargs[k]
+#              else:
+#                  setattr(self,k,kwargs[k])
+#  
+#      def cost(self,params):
+#          kwargs=dict(self.constants)
+#          # Unpack parameter vector and add to args
+#          for k,val in zip(self.tuned,params):
+#              kwargs[k]=val
+#          return cost_params(opt_stations=opt_stations,**kwargs)
+#  
+#      def sweep(self):
+#          size=[ len(self.tuned[k]) for k in self.tuned]
+#          rmse=np.zeros( size, np.float64)
+#          vecs=[ self.tuned[k] for k in self.tuned ]
+#          HERE
+#  for row,kmm in enumerate(kmms):
+#      for col,loss in enumerate(pm_losses):
+#          rmse_kmm_loss[row,col]=cost_kmm_loss([kmm,loss])
+#  res=fmin(cost_kmm_loss,[0.010,0.0015],full_output=True)
+#  best,best_cost,n_steps, n_funcs,status = res
+#      
+#          
+#  swp=Sweeper(daily_NO3_loss=pm_losses,
+#              kmm=kmms,
+#              Csat=1.0,
+#              sav_loss=0.06,
+#              opt_stations=opt_stations)
+
+                
+##                 
+
+
+plt.figure(21).clf()
+fig,ax=plt.subplots(1,1,num=21)
+fig.set_size_inches([6.4,4.8],forward=True)
+cset=ax.contourf(pm_losses,kmms,rmse_kmm_loss,
+                 np.linspace(0.03,0.10,36),cmap=turbo,extend='both')
+plt.colorbar(cset,label='RMSE (mg/l)')
+ax.set_xlabel('Loss (mg/l/day)')
+ax.set_ylabel('k$_{mm}$ (mg/l/day)' )
+fig.subplots_adjust(left=0.17,bottom=0.15)
+
+ax.plot(best[1],best[0],'ko')
+ax.text(best[1],best[0],"k$_{mm}$=%.4f\nNO3 loss=%.5f\nRMSE=%.4f"%(best[0],best[1],best_cost),va='top')
+ax.axis(ymin=0.01)
+fig.savefig(os.path.join(fig_dir,'opt_kmm_loss_withsav_%s.png'%opt_label),dpi=150)
+
+## 
 # First order
 def cost_kni_loss(params):
     return cost_params(daily_NO3_loss=params[1],
@@ -544,6 +638,7 @@ ax.text(best[1],best[0],"k$_{ni}$=%.4f\nNO3 loss=%.5f\nRMSE=%.4f"%(best[0],best[
 ax.axis(ymin=0.01)
 fig.savefig(os.path.join(fig_dir,'opt_kni_loss_%s.png'%opt_label),dpi=150)
 
+## 
 
 # Show parameter sweep for kmm and Csat
 def cost_kmm_Csat(params):
@@ -589,12 +684,126 @@ best,best_cost,n_steps, n_funcs,status = res
 
 # kmm=0.053 mg/l/day
 # Csat=0.35 mg/l
-# NO3 loss=0.0021 1/day
+# NO3 loss=0.0021 mg/l/day
 # RMSE, without Cache: 0.0346
 
 ##
-# evolution equation based on enrichment of NO3 by nitrification
 
+savs=np.linspace(-0.1,0.1,21)
+
+# Show parameter sweep for kmm and sav
+def cost_kmm_sav(params):
+    return cost_params(daily_NO3_loss=0.0015,
+                       Csat=0.5,k_ni=0.0,kmm=params[0],
+                       sav_loss=params[1],
+                       opt_stations=opt_stations)
+
+rmse_kmm_sav=np.zeros( (len(kmms),len(savs)), np.float64)
+for row,kmm in enumerate(kmms):
+    for col,sav in enumerate(savs):
+        rmse_kmm_sav[row,col]=cost_kmm_sav([kmm,sav])
+res=fmin(cost_kmm_sav,[0.010,0.02],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+plt.figure(31).clf()
+fig,ax=plt.subplots(1,1,num=31)
+fig.set_size_inches([6.4,4.8],forward=True)
+cset=ax.contourf(savs,kmms,rmse_kmm_sav,
+                 np.linspace(0.03,0.10,36),
+                 cmap=turbo,extend='both')
+plt.colorbar(cset,label='RMSE (mg/l)')
+ax.set_xlabel('SAV loss (1/day)')
+ax.set_ylabel('k$_{mm}$ (mg/l / day)' )
+fig.subplots_adjust(left=0.17,bottom=0.15)
+
+ax.plot(best[1],best[0],'ko')
+ax.text(best[1],best[0],"k$_{mm}$=%.4f\nsav_loss=%.3f\nRMSE=%.4f"%(best[0],best[1],best_cost),va='top')
+
+fig.savefig(os.path.join(fig_dir,'opt_kmm_sav_%s.png'%opt_label),dpi=150)
+
+##
+# Show parameter sweep for sav vs loss
+def cost_loss_sav(params):
+    return cost_params(daily_NO3_loss=params[0],
+                       Csat=0.5,k_ni=0.0,kmm=0.069,
+                       sav_loss=params[1],
+                       opt_stations=opt_stations)
+
+rmse_loss_sav=np.zeros( (len(losses),len(savs)), np.float64)
+for row,loss in enumerate(losses):
+    for col,sav in enumerate(savs):
+        rmse_loss_sav[row,col]=cost_loss_sav([loss,sav])
+res=fmin(cost_loss_sav,[0.010,0.02],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+plt.figure(32).clf()
+fig,ax=plt.subplots(1,1,num=32)
+fig.set_size_inches([6.4,4.8],forward=True)
+cset=ax.contourf(savs,losses,rmse_loss_sav,
+                 np.linspace(0.03,0.10,36),
+                 cmap=turbo,extend='both')
+plt.colorbar(cset,label='RMSE (mg/l)')
+ax.set_xlabel('SAV loss (mg/l/day)')
+ax.set_ylabel('Loss (mg/l/day)' )
+fig.subplots_adjust(left=0.17,bottom=0.15)
+
+ax.plot(best[1],best[0],'ko')
+ax.text(best[1],best[0],"loss=%.4f\nsav_loss=%.3f\nRMSE=%.4f"%(best[0],best[1],best_cost),va='top')
+
+fig.savefig(os.path.join(fig_dir,'opt_loss_sav_%s.png'%opt_label),dpi=150)
+
+##
+
+# Now with SAV:
+def cost_kmm_sav_loss(params):
+    return cost_params(daily_NO3_loss=params[2],
+                       sav_loss=params[1],
+                       Csat=0.35,k_ni=0.0,kmm=params[0],
+                       opt_stations=opt_stations)
+# Comes up with *negative* SAV loss when CL not included.
+# Comes up wtih negative *loss* when CL is included.
+res=fmin(cost_kmm_sav_loss,[0.010,0.0015,0.0015],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+##
+def cost_kmm_fav_loss(params):
+    return cost_params(daily_NO3_loss=params[2],
+                       fav_loss=params[1],
+                       Csat=0.35,k_ni=0.0,kmm=params[0],
+                       opt_stations=opt_stations)
+# Comes up with *negative* FAV loss
+res=fmin(cost_kmm_fav_loss,[0.010,0.0015,0.0015],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+##
+
+def cost_kmm_marsh_loss(params):
+    return cost_params(daily_NO3_loss=params[2],
+                       marsh_loss=params[1],
+                       Csat=0.35,k_ni=0.0,kmm=params[0],
+                       opt_stations=opt_stations)
+# Comes up with *negative* marsh loss
+res=fmin(cost_kmm_marsh_loss,[0.010,0.0015,0.0015],full_output=True)
+best,best_cost,n_steps, n_funcs,status = res
+
+##
+
+def cost_kmm_sav_fav_marsh_loss(params):
+    return cost_params(kmm=params[0],
+                       sav_loss=params[1],
+                       fav_loss=params[2],
+                       marsh_loss=params[3],
+                       daily_NO3_loss=params[4],
+                       Csat=0.35,k_ni=0.0,
+                       opt_stations=opt_stations)
+res=fmin(cost_kmm_sav_fav_marsh_loss,
+         [0.010,0.01,0.01,0.01,0.0015],full_output=True)
+# SAV: positive, all other loss terms negative.
+best,best_cost,n_steps, n_funcs,status = res
+
+##
+
+# evolution equation based on enrichment of NO3 by nitrification
 # interpolate all variables to same time steps, corresponding to July-Aug
 
 NO3_1st = {}
@@ -607,21 +816,31 @@ pred_stations = ['dc','cr','cl','di','vs']
 npred = len(pred_stations)
 noffset = 0
 dt_days = np.diff(age_data['dn']['di'])[0]
-model_params=dict(daily_NO3_loss = 0.0015,
-                  Csat=1.0,k_ni=0.08,kmm=0.12)
+#model_params=dict(daily_NO3_loss = 0.0015,
+#                  Csat=1.0,k_ni=0.08,kmm=0.12,
+#                  sav_loss=0.06
+#)
+# Optimize over kmm, sav, loss:
+model_params=dict(daily_NO3_loss = -0.00339,
+                  Csat=0.35,kmm=0.0584,k_ni=0.12,
+                  sav_loss=0.19
+)
+
+# Like above, but hand-adjust daily_NO3_loss
+#model_params=dict(daily_NO3_loss = 0.00,
+#                  Csat=0.35,kmm=0.0584,k_ni=0.12,
+#                  sav_loss=0.19
+#)
+
 
 for sta in pred_stations:
-    dnum_in=age_data['dn'][sta][noffset:]
-    age_in =age_data['age'][sta][noffset:]
     # Vectorized:
-    NH4_mm[sta],NO3_mm[sta] = nitri_model(dnum_in,age_in,**model_params)
-    NH4_1st[sta],NO3_1st[sta] = nitri_model(dnum_in,age_in,method='first',**model_params)
+    NH4_mm[sta],NO3_mm[sta] = nitri_model(sta_dfs[sta],**model_params)
+    #NH4_1st[sta],NO3_1st[sta] = nitri_model(sta_dfs[sta],method='first',**model_params)
 
 
-
-##         
 plot_stations = pred_stations # could change later
-methods = ['mm','first']
+methods = ['mm']
 nplot = len(plot_stations)
 
 for method in methods:
@@ -634,141 +853,154 @@ for method in methods:
         NH4_plot = NH4_mm
     else:
         print( "invalid method")
-        sys.exit(0)
-    # make time series plot
-    fig, ax = plt.subplots(npred+3, 1, sharex="all",figsize=[16,16])
-    for ns, sta in enumerate(plot_stations):
-        ax[ns].plot_date(age_data['dn'][sta],NO3_age[sta],'-',label='observed')
-        ax[ns].plot_date(age_data['dn'][sta],NO3_plot[sta],'-',label='predicted')
-        ax[ns].plot_date(age_data['dn'][sta],NO3_age['fp'],'-',label='Freeport')
-        ax[ns].legend()
-        ax[ns].set_xlim(age_data['dn'][sta][0],age_data['dn'][sta][-1])
-        ax[ns].set_ylim(0,0.6)
-        ax[ns].set_ylabel('NO3 N')
-        ax[ns].set_title(common.label_dict[sta])
 
-    ax[npred].plot(NH4_dn,NH4_fp,label='Freeport')
-    for sta in plot_stations:
-        ax[npred].plot(age_data['dn'][sta],NH4_plot[sta],label=common.label_dict[sta])
-    ax[npred].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
-    ax[npred].legend()
-    ax[npred].set_ylabel('NH4 N')
-
-    for sta in plot_stations:
-        ax[npred+1].plot(age_data['dn'][sta],age_data['age'][sta],label=common.label_dict[sta])
-    ax[npred+1].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
-    ax[npred+1].legend()
-    ax[npred+1].set_ylabel('Age')
-
-    for sta in plot_stations:
-        ax[npred+2].plot(age_data['dn'][sta],age_data['conc'][sta],label=common.label_dict[sta])
-    ax[npred+2].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
-    ax[npred+2].legend()
-    ax[npred+2].set_ylabel('Conc')
-
-    # Make all the legends the same layout
-    for a in ax:
-        a.legend(loc='center left',bbox_to_anchor=[1.04,0.5])
-    fig.subplots_adjust(right=0.88)
-    assert False
-    fig.autofmt_xdate()
-    plt.savefig(os.path.join(fig_dir,'%s.png'%method),bbox_inches='tight')
-    plt.close()
-
-    # make residual plot
-    res_vars = common.age_vars # do everything for now
-    nres_vars = len(res_vars)
-    # ymax_dict = {'Age':30,
-    fig, axes = plt.subplots(nres_vars, npred+1,
-                             sharey='row',figsize=[16,16])
-    NO3_res = {}
-    xlim_dict = {'age':[0,40],
-                 'conc':[0,1],
-                 'depth':[0,10],
-                 'temperature':[15,22]}
-    metrics = {}
-    metrics['sta'] = []
-    metrics['se'] = np.zeros(nplot+1, np.float64)
-    metrics['rmse'] = np.zeros(nplot+1, np.float64)
-    metrics['r'] = np.zeros(nplot+1, np.float64)
-    metrics['wm'] = np.zeros(nplot+1, np.float64)
-    for ns, sta in enumerate(plot_stations):
-        metrics['sta'].append(sta)
-        NO3_res[sta] = NO3_age[sta] - NO3_plot[sta]
-        valid = np.where(np.isfinite(NO3_res[sta]))[0]
-        res_val = NO3_res[sta][valid]
-        if ns == 0:
-            all_res = copy.deepcopy(res_val)
-            all_NO3_obs  = copy.deepcopy(NO3_age[sta][valid])
-            all_NO3_pred = copy.deepcopy(NO3_plot[sta][valid])
-        else:
-            all_res = np.concatenate((all_res,res_val))
-            all_NO3_obs  = np.concatenate((all_NO3_obs, NO3_age[sta][valid]))
-            all_NO3_pred = np.concatenate((all_NO3_pred,NO3_plot[sta][valid]))
-    # calculate and print metrics
-        metrics['se'][ns] = np.std(NO3_res[sta][valid])
-        metrics['rmse'][ns] = np.sqrt(mean_squared_error(NO3_age[sta][valid],NO3_plot[sta][valid]))
-        mm, bb, rr, pp, se = stats.linregress(NO3_age[sta][valid], NO3_plot[sta][valid])
-        metrics['r'][ns] = rr
-        obs_mean = np.mean(NO3_age[sta][valid])
-        abs_NO3_pred_diff = np.abs(NO3_plot[sta][valid]-obs_mean)
-        abs_NO3_obs_diff  = np.abs(NO3_age[sta][valid]-obs_mean)
-        denom = np.sum(np.power(abs_NO3_pred_diff+abs_NO3_obs_diff,2))
-        metrics['wm'][ns] = 1.-np.sum(np.power(NO3_res[sta][valid],2))/denom
-#        metrics['wm'][ns] = np.power(all_res,2)/denom
-    metrics['sta'].append('all')
-    metrics['se'][nplot] = np.std(all_res)
-    metrics['rmse'][nplot] = np.sqrt(mean_squared_error(all_NO3_obs, all_NO3_pred))
-    mm, bb, rr, pp, se = stats.linregress(all_NO3_obs, all_NO3_pred)
-    metrics['r'][nplot] = rr
-    obs_mean = np.mean(all_NO3_obs)
-    abs_NO3_pred_diff = np.abs(all_NO3_pred-obs_mean)
-    abs_NO3_obs_diff  = np.abs(all_NO3_obs-obs_mean)
-    denom = np.sum(np.power(abs_NO3_pred_diff+abs_NO3_obs_diff,2))
-    metrics['wm'][nplot] = 1.-np.sum(np.power(all_res,2))/denom
-    for nv, var in enumerate(res_vars):
-#       all_data = np.empty(1, dtype=np.float64)
+    if 1: # make time series plot
+        plt.figure(11).clf()
+        fig, ax = plt.subplots(npred+3, 1, sharex="all",figsize=[16,16],num=11)
+        fig.set_size_inches([11.6,9.4],forward=True)
         for ns, sta in enumerate(plot_stations):
-            #axes[nv,ns].plot(NO3_res[sta],age_data[var][sta],'.')
-            axes[nv,ns].plot(age_data[var][sta],NO3_res[sta],'.')
-            if nv == 0:
-                axes[nv,ns].set_title(common.label_dict[sta])
-            if nv == nres_vars-1:
-                axes[nv,ns].set_xlabel('NO3 as N Residual')
-            if ns == 0:
-                axes[nv,ns].set_ylabel('NO3 as N Residual')
-            axes[nv,ns].set_xlabel(common.var_label_dict[var])
-            axes[nv,ns].set_xlim(xlim_dict[var])
+            ax[ns].plot_date(age_data['dn'][sta],NO3_age[sta],'-',label='observed')
+            ax[ns].plot_date(age_data['dn'][sta],NO3_plot[sta],'-',label='predicted')
+            ax[ns].plot_date(age_data['dn'][sta],NO3_age['fp'],'-',label='Freeport')
+            ax[ns].legend()
+            ax[ns].set_xlim(age_data['dn'][sta][0],age_data['dn'][sta][-1])
+            ax[ns].set_ylim(0,0.6)
+            ax[ns].set_ylabel('NO3 N')
+            ax[ns].set_title(common.label_dict[sta])
+
+        ax[npred].plot(NH4_dn,NH4_fp,label='Freeport')
+        for sta in plot_stations:
+            ax[npred].plot(age_data['dn'][sta],NH4_plot[sta],label=common.label_dict[sta])
+        ax[npred].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
+        ax[npred].legend()
+        ax[npred].set_ylabel('NH4 N')
+
+        for sta in plot_stations:
+            ax[npred+1].plot(age_data['dn'][sta],age_data['age'][sta],label=common.label_dict[sta])
+        ax[npred+1].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
+        ax[npred+1].legend()
+        ax[npred+1].set_ylabel('Age')
+
+        for sta in plot_stations:
+            ax[npred+2].plot(age_data['dn'][sta],age_data['conc'][sta],label=common.label_dict[sta])
+        ax[npred+2].set_xlim(age_data['dn']['di'][0],age_data['dn']['di'][-1])
+        ax[npred+2].legend()
+        ax[npred+2].set_ylabel('Conc')
+
+        # Make all the legends the same layout
+        for a in ax:
+            a.legend(loc='center left',bbox_to_anchor=[1.04,0.5])
+        fig.subplots_adjust(right=0.88)
+        # assert False #? 
+        fig.autofmt_xdate()
+        plt.savefig(os.path.join(fig_dir,'%s.png'%method),bbox_inches='tight')
+        #plt.close()
+
+    if 1: # make residual plot
+        res_vars = common.age_vars # do everything for now
+        nres_vars = len(res_vars)
+        # ymax_dict = {'Age':30,
+        plt.figure(12).clf()
+        fig.set_size_inches([11.6,9.4],forward=True)
+        fig, axes = plt.subplots(nres_vars, npred+1,
+                                 sharey='row',figsize=[16,16],
+                                 num=12)
+        NO3_res = {}
+        xlim_dict = {'age':[0,40],
+                     'conc':[0,1],
+                     'depth':[0,10],
+                     'temperature':[15,22],
+                     'fav-age':[0,0.04],
+                     'sav-age':[0,2.5],
+                     'marsh-age':[0,0.5],
+                     }
+        metrics = {}
+        metrics['sta'] = []
+        metrics['se'] = np.zeros(nplot+1, np.float64)
+        metrics['rmse'] = np.zeros(nplot+1, np.float64)
+        metrics['r'] = np.zeros(nplot+1, np.float64)
+        metrics['wm'] = np.zeros(nplot+1, np.float64)
+        for ns, sta in enumerate(plot_stations):
+            metrics['sta'].append(sta)
+            NO3_res[sta] = NO3_age[sta] - NO3_plot[sta]
             valid = np.where(np.isfinite(NO3_res[sta]))[0]
             res_val = NO3_res[sta][valid]
-            var_val = age_data[var][sta][valid]
-            mm, bb, rr, pp, se = stats.linregress(var_val, res_val)
-            x_min = min(var_val)
-            x_max = max(var_val)
+            if ns == 0:
+                all_res = copy.deepcopy(res_val)
+                all_NO3_obs  = copy.deepcopy(NO3_age[sta][valid])
+                all_NO3_pred = copy.deepcopy(NO3_plot[sta][valid])
+            else:
+                all_res = np.concatenate((all_res,res_val))
+                all_NO3_obs  = np.concatenate((all_NO3_obs, NO3_age[sta][valid]))
+                all_NO3_pred = np.concatenate((all_NO3_pred,NO3_plot[sta][valid]))
+        # calculate and print metrics
+            metrics['se'][ns] = np.std(NO3_res[sta][valid])
+            metrics['rmse'][ns] = np.sqrt(mean_squared_error(NO3_age[sta][valid],NO3_plot[sta][valid]))
+            mm, bb, rr, pp, se = stats.linregress(NO3_age[sta][valid], NO3_plot[sta][valid])
+            metrics['r'][ns] = rr
+            obs_mean = np.mean(NO3_age[sta][valid])
+            abs_NO3_pred_diff = np.abs(NO3_plot[sta][valid]-obs_mean)
+            abs_NO3_obs_diff  = np.abs(NO3_age[sta][valid]-obs_mean)
+            denom = np.sum(np.power(abs_NO3_pred_diff+abs_NO3_obs_diff,2))
+            metrics['wm'][ns] = 1.-np.sum(np.power(NO3_res[sta][valid],2))/denom
+    #        metrics['wm'][ns] = np.power(all_res,2)/denom
+        metrics['sta'].append('all')
+        metrics['se'][nplot] = np.std(all_res)
+        metrics['rmse'][nplot] = np.sqrt(mean_squared_error(all_NO3_obs, all_NO3_pred))
+        mm, bb, rr, pp, se = stats.linregress(all_NO3_obs, all_NO3_pred)
+        metrics['r'][nplot] = rr
+        obs_mean = np.mean(all_NO3_obs)
+        abs_NO3_pred_diff = np.abs(all_NO3_pred-obs_mean)
+        abs_NO3_obs_diff  = np.abs(all_NO3_obs-obs_mean)
+        denom = np.sum(np.power(abs_NO3_pred_diff+abs_NO3_obs_diff,2))
+        metrics['wm'][nplot] = 1.-np.sum(np.power(all_res,2))/denom
+        for nv, var in enumerate(res_vars):
+    #       all_data = np.empty(1, dtype=np.float64)
+            for ns, sta in enumerate(plot_stations):
+                #axes[nv,ns].plot(NO3_res[sta],age_data[var][sta],'.')
+                axes[nv,ns].plot(age_data[var][sta],NO3_res[sta],'.')
+                if nv == 0:
+                    axes[nv,ns].set_title(common.label_dict[sta])
+                if nv == nres_vars-1:
+                    axes[nv,ns].set_xlabel('NO3 as N\nResidual')
+                if ns == 0:
+                    axes[nv,ns].set_ylabel('NO3 as N\nResidual')
+                axes[nv,ns].set_xlabel(common.var_label_dict[var])
+                axes[nv,ns].set_xlim(xlim_dict[var])
+                valid = np.where(np.isfinite(NO3_res[sta]))[0]
+                res_val = NO3_res[sta][valid]
+                var_val = age_data[var][sta][valid]
+                mm, bb, rr, pp, se = stats.linregress(var_val, res_val)
+                x_min = min(var_val)
+                x_max = max(var_val)
+                xx = np.asarray([x_min,x_max])
+                yy = mm*xx + bb
+                axes[nv,ns].plot(xx,yy,'-')
+                if ns == 0:
+                    all_data = copy.deepcopy(var_val)
+                else:
+                    all_data = np.concatenate((all_data,var_val))
+            axes[nv,npred].plot(all_data,all_res,'.')
+            if nv == 0:
+                axes[nv,npred].set_title('all stations')
+            axes[nv,npred].set_xlabel(common.var_label_dict[var])
+            axes[nv,npred].set_xlim(xlim_dict[var])
+            mm, bb, rr, pp, se = stats.linregress(all_data, all_res)
+            x_min = min(all_data)
+            x_max = max(all_data)
             xx = np.asarray([x_min,x_max])
             yy = mm*xx + bb
-            axes[nv,ns].plot(xx,yy,'-')
-            if ns == 0:
-                all_data = copy.deepcopy(var_val)
-            else:
-                all_data = np.concatenate((all_data,var_val))
-        axes[nv,npred].plot(all_data,all_res,'.')
-        if nv == 0:
-            axes[nv,npred].set_title('all stations')
-        axes[nv,npred].set_xlabel(common.var_label_dict[var])
-        axes[nv,npred].set_xlim(xlim_dict[var])
-        mm, bb, rr, pp, se = stats.linregress(all_data, all_res)
-        x_min = min(all_data)
-        x_max = max(all_data)
-        xx = np.asarray([x_min,x_max])
-        yy = mm*xx + bb
-        axes[nv,npred].plot(xx,yy,'-')
+            axes[nv,npred].plot(xx,yy,'-')
 
-    fig.tight_layout()
-    plt.savefig(os.path.join(fig_dir,'%s_residual.png'%method),bbox_inches='tight')
-    plt.close()
-    sequence=['sta','rmse','se','r','wm']
-    pd.DataFrame.from_dict(metrics).to_csv('%s_metrics.csv'%method,columns=sequence,index=False)
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.09)
+        fig.text(0.1,0.01,
+                 "   ".join(["%s: %.4g"%(k,model_params[k]) for k in model_params]),
+                 )
+        plt.savefig(os.path.join(fig_dir,'%s_residual.png'%method),bbox_inches='tight')
+        #plt.close()
+        sequence=['sta','rmse','se','r','wm']
+        pd.DataFrame.from_dict(metrics).to_csv('%s_metrics.csv'%method,columns=sequence,index=False)
 
 ##
 
@@ -857,3 +1089,44 @@ ax.legend(loc='upper left', frameon=0, bbox_to_anchor=[1.02,1.0])
 
 fig.subplots_adjust(right=0.65)
 fig.savefig('underway-station-comparison.png',dpi=150)
+
+##
+
+# 2021-08-29: all of fav, sav, and marsh loss terms get
+# optimized to negative. This is probably because San Joaquin
+# and Old River have very high NO3, and nonzero marsh/fav/sav
+# exposure.
+# Hand-tuning looks quite good for sav-loss around 0.06 day-1
+# Hand-tuning FAV take a large value, ~1.0 to make a difference,
+#   and still doesn't do much in Liberty Island
+# Marsh loss helps with a few eastern tribs, with a loss rate ~ 0.1 day-1.
+
+# When baseline loss is constant,then it's possible to get positive
+# sav loss
+
+# parameter sweep confirms that they are confounded.
+
+# Those results, though, were still with CL omitted. When CL is
+# included, then loss-vs-SAV favors increasing SAV, and a slightly
+# negative loss.
+
+# HERE: look at residuals try to parse out why the mapping results
+# look better with SAV hand-tuned, while the optimization makes SAV
+# negative. For the underway data, SJ water could be influencing things,
+# but seems less relevant for the stations.
+# Consider bringing CSC back: this.  makes a huge difference, enough to
+#  drive SAV loss to definitively positive (tho makes daily loss negative)
+
+# With the old parameters but adding sav_loss=0.06:
+#    At this point depth is the strongest predictor of residuals.
+#    Residuals are more positive for greater depths.
+#     => underpredict NO3 in deep water
+#        maybe because there is a benthic NO3 sink which we represent as
+#        volume process.
+# With parameters optimized over kmm,sav,loss:
+#  No clear remaining predictors when considering all sites.
+
+
+
+
+
