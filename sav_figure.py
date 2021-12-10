@@ -21,6 +21,8 @@ grid_fn="../data/untrim/LTO_Restoration_2019_N.grd"
 print("Loading grid")
 g=unstructured_grid.UnstructuredGrid.read_untrim(grid_fn)
 poly=g.boundary_polygon()
+##
+swaths=wkb2shp.shp2geom('swaths-v00.shp')
 
 ##
 
@@ -63,7 +65,26 @@ cbar=plt.colorbar(ccoll,label='Fraction SAV',cax=cax)
 
 ax.axis('off')
 fig.subplots_adjust(left=0.02,right=0.98,bottom=0.02,top=0.98)
-ax.axis((569739., 656663, 4181680, 4271000.))
+ax.axis((569739., 656663, 4180000, 4271000.))
+
+from matplotlib import patches
+artists={}
+if 1: # show 2018 footprint
+    for rec in swaths:
+        if rec['year']=='2018':
+            color='tab:red'
+        else:
+            color='tab:blue'
+        geo=rec['geom'].difference(rec['geom'].buffer(-800))
+        art=plot_wkb.plot_wkb(geo,ax=ax,zorder=2,facecolor=color,alpha=0.3,
+                              lw=0.5,edgecolor='none')
+        #art=plot_wkb.plot_wkb(rec['geom'],ax=ax,zorder=2,facecolor='none',alpha=0.3,
+        #                      lw=1.5,edgecolor=color)
+        artists[rec['year']]=art
+import matplotlib.patheffects as pe
+
+ax.legend(artists.values(),artists.keys(),
+          frameon=False,loc='upper left',bbox_to_anchor=[0.2,1.0])
 
 fig.savefig('sav-figure.png',dpi=200)
 
