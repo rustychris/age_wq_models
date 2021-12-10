@@ -65,7 +65,7 @@ nrows = len(uw_df_thin)
 
 #fig_dir="fig001" # new uw_df.csv from Ed with veg data, but only to get veg data
 #fig_dir="fig002" # new uw_df.csv with complete veg
-fig_dir="fig003" # regen plots, nothing really new
+fig_dir="fig004" # regen plots, nothing really new
 
 if not os.path.exists(fig_dir):
     os.mkdir(fig_dir)
@@ -221,7 +221,7 @@ def nitri_model(df, # dnums_in,age_in,sav_in,fav_in,marsh_in,
     n_NH4 = np.searchsorted(NH4_dn,dn_lagged)
     NH4_lag = NH4_fp[n_NH4] # lagged boundary NH4
     NO3_lag = NO3['fp_lp'][n_NO3] # lagged boundary NO3
-
+ 
     # Steps dependent on model parameters
     if method=='first': # First order model:
         NH4_atten=1.-np.exp(-k_ni*age_in) # fraction of NH4 nitrified
@@ -432,6 +432,8 @@ zooms=['zoomin','zoomout']
 fig_num=100
 from itertools import product
 
+
+
 for analyte,scalar,zoom in product(analytes,scalars,zooms):
     fig_num+=1
     fig=scatter_figure(analyte,scalar,zoom,fig_num)
@@ -456,6 +458,9 @@ for sta in age_data['dn']:
     sta_dfs[sta]=df
     
 ##     
+
+# How to make this into AIC?
+#   - ?
 
 def cost_params(method='mm',
                 opt_stations=['dc','cr','cl','di','vs'],

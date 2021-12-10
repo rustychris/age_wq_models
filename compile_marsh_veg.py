@@ -1,3 +1,8 @@
+import sys
+if 'ipython' not in sys.argv[0]:
+    import matplotlib
+    matplotlib.use('Agg')
+
 import six
 import logging
 from stompy.grid import unstructured_grid
@@ -9,7 +14,12 @@ import numpy as np
 from shapely import prepared, ops
 import time
 ## 
-grid_fn="../data/untrim/LTO_Restoration_2018_h.grd"
+# grid_fn="../data/untrim/LTO_Restoration_2018_h.grd"
+# grid_version='LTOrestoration2018_h'
+
+grid_fn="../data/untrim/LTO_Restoration_2019_N.grd"
+grid_version="LTOrestoration2019_N"
+
 ##
 
 print("Loading grid")
@@ -41,7 +51,7 @@ plt.axis('equal')
 fig.tight_layout()
 
 plt.axis((602608.1236986985, 624097.5402707062, 4231791.272191033, 4246013.668029016))
-plt.savefig('marsh_frac_csc.png')
+plt.savefig('marsh_frac_csc%s.png'%grid_version)
 
 ##
 missing_2018_shp="../data/veg/2018/missing_swath.shp"
@@ -202,19 +212,19 @@ class Overlay(object):
 # Single thread, full 2020 runs in maybe 5 minutes
 
 ##
+import multiprocessing as mp
+
 
 with mp.Pool(4) as pool:
     sav2020_ovl=Overlay(g,sav2020_shp,include_shp=missing_2018_shp,pool=pool)
-    np.save('sav_2020.np',sav2020_ovl.dest_frac)
+    np.save('sav_2020-%s.np'%grid_version,sav2020_ovl.dest_frac)
     
-
 # when pushing the hard work to delayed ?
 # seems to be quite stuck not moving through geometries or cells?
 # Where? last message was INFO:utils:26774/57907
 # Ah - it's during sanitize.
 # A few features are *very* slow to sanitize
 ## 
-import multiprocessing as mp
 t=time.time()
 with mp.Pool(4) as pool:
     sav2018_ovl=Overlay(g,sav2018_shp,exclude_shp=missing_2018_shp,pool=pool)
@@ -222,13 +232,13 @@ elapsed=time.time()-t
 
 # 2350s
 print("2018 SAV processed in %.3fs"%elapsed)
-np.save('sav_2018.np',sav2018_ovl.dest_frac)
+np.save('sav_2018-%s.np'%grid_version,sav2018_ovl.dest_frac)
 
 ##
 
 with mp.Pool(4) as pool:
     why2018_ovl=Overlay(g,why2018_shp,exclude_shp=missing_2018_shp,pool=pool)
-np.save('why_2018.np',why2018_ovl.dest_frac)
+np.save('why_2018-%s.np'%grid_version,why2018_ovl.dest_frac)
 
 # 65s or so
 t=time.time()
@@ -236,7 +246,7 @@ with mp.Pool(4) as pool:
     why2020_ovl=Overlay(g,why2020_shp,include_shp=missing_2018_shp,pool=pool)
 elapsed=time.time()-t
 dest_frac=why2020_ovl.dest_frac.clip(0,1)
-np.save('why_2020.np',dest_frac)
+np.save('why_2020-%s.np'%grid_version,dest_frac)
 
 ##
 
@@ -247,13 +257,13 @@ wpr2020b_shp="../data/veg/2020/202007_rfclass_v7_WP.shp"
 t=time.time()
 with mp.Pool(4) as pool:
     wpr2020a_ovl=Overlay(g,wpr2020a_shp,include_shp=missing_2018_shp,pool=pool)
-    np.save('wpr_2020a.np',wpr2020a_ovl.dest_frac)
+    np.save('wpr_2020a-%s.np'%grid_version,wpr2020a_ovl.dest_frac)
 
     wpr2020b_ovl=Overlay(g,wpr2020b_shp,include_shp=missing_2018_shp,pool=pool)
-    np.save('wpr_2020b.np',wpr2020b_ovl.dest_frac)
+    np.save('wpr_2020b-%s.np'%grid_version,wpr2020b_ovl.dest_frac)
 
     wpr2018_ovl=Overlay(g,wpr2018_shp,exclude_shp=missing_2018_shp,pool=pool)
-    np.save('wpr_2018.np',wpr2018_ovl.dest_frac)
+    np.save('wpr_2018-%s.np'%grid_version,wpr2018_ovl.dest_frac)
 elapsed=time.time()-t
 print("Elapsed for water primrose: %.3fs"%elapsed)
 
@@ -281,18 +291,18 @@ plt.axis('equal')
 fig.tight_layout()
 
 plt.axis((602608.1236986985, 624097.5402707062, 4231791.272191033, 4246013.668029016))
-#plt.savefig('sav2020_frac_csc.png')
+plt.savefig('sav2020_frac_csc-%s.png'%grid_version)
 
 ##
 
 srcs=dict(
-    sav_2018= np.load('sav_2018.np.npy'),
-    sav_2020= np.load('sav_2020.np.npy'),
-    why_2018= np.load('why_2018.np.npy'),
-    why_2020= np.load('why_2020.np.npy'),
-    wpr_2018= np.load('wpr_2018.np.npy'),
-    wpr_2020a=np.load('wpr_2020a.np.npy'),
-    wpr_2020b=np.load('wpr_2020b.np.npy')
+    sav_2018= np.load('sav_2018-%s.np.npy'%grid_version),
+    sav_2020= np.load('sav_2020-%s.np.npy'%grid_version),
+    why_2018= np.load('why_2018-%s.np.npy'%grid_version),
+    why_2020= np.load('why_2020-%s.np.npy'%grid_version),
+    wpr_2018= np.load('wpr_2018-%s.np.npy'%grid_version),
+    wpr_2020a=np.load('wpr_2020a-%s.np.npy'%grid_version),
+    wpr_2020b=np.load('wpr_2020b-%s.np.npy'%grid_version)
 )
 
 ##
@@ -316,6 +326,8 @@ fig.tight_layout()
 colors=np.c_[sav_combined,fav_combined,0.4*np.ones_like(sav_combined)]
 ccoll.set_facecolors(colors)
 
+plt.savefig('rgb-%s.png'%grid_version)
+
 ##
 
 # What's a good datum for marsh?
@@ -331,11 +343,13 @@ df['marsh']=marsh_frac
 df['sav']=sav_combined
 df['fav']=fav_combined
 
-df.to_csv("marsh_and_veg_v00.csv",index=False,float_format="%.3f")
+# Normalize marsh so that the sum is never greater than 1.0
+df['marsh']=np.minimum(df['marsh'],1.0-df['sav']-df['fav'])
 
-## 
+df.to_csv("marsh_and_veg_v01-%s.csv"%grid_version,index=False,float_format="%.3f")
+
 fmt = '%8d %6.3f %6.3f %6.3f'
-with open("marsh_and_veg_v00.dat",'wt') as fp:
+with open("marsh_and_veg_v01-%s.dat"%grid_version,'wt') as fp:
     fp.write("cell      marsh  sav    fav  \n")
     np.savetxt(fp, df.values, fmt=fmt)
 
