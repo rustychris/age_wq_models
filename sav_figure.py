@@ -12,6 +12,14 @@ from stompy.plot import plot_wkb
 import matplotlib.pyplot as plt
 import numpy as np
 
+# 2023-09-06: Crop to match other figures, and add labels for
+# AV-related location mentions in the text
+# Franks Tract, Temporary Barrier in False River 2015?
+# Cache Slough "Complex"
+# Old River, Middle River channels if not shown elsewhere
+# 
+
+# 
 ## 
 #grid_fn="../data/untrim/LTO_Restoration_2018_h.grd"
 grid_fn="../data/untrim/LTO_Restoration_2019_N.grd"
@@ -35,9 +43,10 @@ from stompy.plot import plot_wkb
 
 plt.figure(2).clf()
 fig,ax=plt.subplots(num=2)
-fig.set_size_inches([5.5,5.5],forward=True)
+#fig.set_size_inches([5.5,5.5],forward=True)
+fig.set_size_inches([4.6,5.5],forward=True)
 ax.set_adjustable('datalim')
-cax=fig.add_axes([0.1,0.65,0.02,0.3])
+cax=fig.add_axes([0.78,0.62,0.02,0.25])
 
 cmap=cmocean.cm.algae
 import stompy.plot.cmap as scmap
@@ -55,17 +64,20 @@ def desaturate(rgb):
 # Keep the same ramp of value though.
 # And clip the low end so that we start on a gray that's distinct
 # from the background white
-cmap=scmap.transform_color(desaturate,scmap.cmap_clip(cmap,0.05,1))
+# Also ease up on the high end so it's green, not so close to black
+# that annotations get lost.
+cmap=scmap.transform_color(desaturate,scmap.cmap_clip(cmap,0.05,0.6))
 
 # Bulk up the lines to 1.0 to make some channels more visible
-ccoll=g.plot_cells(values=df.sav,cmap=cmap,clim=[0.0,1],
+ccoll=g.plot_cells(values=df.sav+df.fav,cmap=cmap,clim=[0.0,1],
                    edgecolor='face',lw=1.,ax=ax)
-cbar=plt.colorbar(ccoll,label='Fraction SAV',cax=cax)
+cbar=plt.colorbar(ccoll,label='Fraction SAV+FAV',cax=cax)
 #plot_wkb.plot_wkb(poly,edgecolor='k',fc='none',lw=0.3,zorder=2,ax=ax)
 
 ax.axis('off')
 fig.subplots_adjust(left=0.02,right=0.98,bottom=0.02,top=0.98)
-ax.axis((569739., 656663, 4180000, 4271000.))
+#ax.axis((569739., 656663, 4180000, 4271000.))
+ax.axis( (595067., 659066., 4177694., 4254381.))
 
 from matplotlib import patches
 artists={}
@@ -81,15 +93,56 @@ if 1: # show 2018 footprint
         #art=plot_wkb.plot_wkb(rec['geom'],ax=ax,zorder=2,facecolor='none',alpha=0.3,
         #                      lw=1.5,edgecolor=color)
         artists[rec['year']]=art
-import matplotlib.patheffects as pe
+
+#import matplotlib.patheffects as pe
 
 ax.legend(artists.values(),artists.keys(),
-          frameon=False,loc='upper left',bbox_to_anchor=[0.2,1.0])
+          frameon=False,loc='upper left',
+          bbox_to_anchor=[0.74,1.0])
 
-fig.savefig('sav-figure.png',dpi=200)
 
 ##
 
+# labels
+kw=dict(arrowprops=dict(arrowstyle='-'),
+        fontsize=9)
+
+ax.annotate( "Franks Tract",
+             [622283., 4211099],
+             xytext=[618000, 4197400.],
+             ha='right',**kw)
+
+ax.annotate("Cache Slough\nComplex",
+            [615617, 4238840.],
+            xytext=[608081., 4247990.],
+            ha='center',**kw)
+
+ax.plot( [616835.,616968],[ 4212697, 4213162],"r-",lw=3.5)
+
+ax.annotate("False River\nTemp. Barrier",
+            [616835, 4212697.],
+            xytext=[609000., 4202800],
+            ha='center',**kw)
+
+# Try Old / Middle River
+
+ax.annotate("Old R.",
+            [626500., 4201000],
+            ha='center',
+            rotation=287,
+            fontsize=kw['fontsize'])
+ax.annotate("Middle R.",
+            [632000., 4195000.],
+            ha='center',
+            rotation=298,
+            fontsize=kw['fontsize'])
+
+
+##
+fig.savefig('sav-figure.png',dpi=300)
+
+
+##
 # # Alternative approach -- no colorbar, tho
 # plt.figure(3).clf()
 # fig,ax=plt.subplots(num=3)
